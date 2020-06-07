@@ -28,8 +28,8 @@
 
 namespace OPNsense\Firewall;
 
-use \OPNsense\Core\Config;
-use \OPNsense\Firewall\Alias;
+use OPNsense\Core\Config;
+use OPNsense\Firewall\Alias;
 
 /**
  * Class Util, common static firewall support functions
@@ -129,14 +129,16 @@ class Util
             // read all aliases at once, and cache descriptions.
             foreach ((new Alias())->aliasIterator() as $alias) {
                 if (empty(self::$aliasDescriptions[$alias['name']])) {
-                    if (!empty($alias['descr'])) {
-                        self::$aliasDescriptions[$alias['name']] = $alias['descr'];
-                    } elseif (!empty($alias['description'])) {
-                        self::$aliasDescriptions[$alias['name']] = $alias['description'];
-                    } elseif (!empty($alias['content'])) {
+                    if (!empty($alias['description'])) {
+                        self::$aliasDescriptions[$alias['name']] = '<strong>' . $alias['description'] . '</strong><br/>';
+                    } else {
+                        self::$aliasDescriptions[$alias['name']] = "";
+                    }
+
+                    if (!empty($alias['content'])) {
                         $tmp = array_slice(explode("\n", $alias['content']), 0, 10);
                         asort($tmp);
-                        self::$aliasDescriptions[$alias['name']] = implode("<br/>", $tmp);
+                        self::$aliasDescriptions[$alias['name']] .= implode("<br/>", $tmp);
                     }
                 }
             }

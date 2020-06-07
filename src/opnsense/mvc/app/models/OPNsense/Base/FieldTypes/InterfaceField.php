@@ -1,31 +1,29 @@
 <?php
 
-/**
- *    Copyright (C) 2015-2019 Deciso B.V.
+/*
+ * Copyright (C) 2015-2019 Deciso B.V.
+ * All rights reserved.
  *
- *    All rights reserved.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
- *    Redistribution and use in source and binary forms, with or without
- *    modification, are permitted provided that the following conditions are met:
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
  *
- *    1. Redistributions of source code must retain the above copyright notice,
- *       this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- *    2. Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *
- *    THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
- *    INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
- *    AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
- *    AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
- *    OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- *    SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- *    INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- *    CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- *    ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- *    POSSIBILITY OF SUCH DAMAGE.
- *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+ * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+ * OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 
 namespace OPNsense\Base\FieldTypes;
@@ -62,7 +60,7 @@ class InterfaceField extends BaseListField
     /**
      * @var bool allow dynamic interfaces
      */
-    private $internalAllowDynamic = false;
+    private $internalAllowDynamic = 0;
 
     /**
      *  collect parents for lagg interfaces
@@ -122,6 +120,10 @@ class InterfaceField extends BaseListField
                 foreach ($configObj->interfaces->children() as $key => $value) {
                     if (!$this->internalAllowDynamic && !empty($value->internal_dynamic)) {
                         continue;
+                    } elseif ($this->internalAllowDynamic == 2 && !empty($value->internal_dynamic)) {
+                        if (empty($value->ipaddr) && empty($value->ipaddrv6)) {
+                            continue;
+                        }
                     }
                     $allInterfaces[$key] = $value;
                     if (!empty($value->if)) {
@@ -187,7 +189,7 @@ class InterfaceField extends BaseListField
     private function updateInternalCacheKey()
     {
         $tmp  = serialize($this->internalFilters);
-        $tmp .= $this->internalAllowDynamic ? "Y" : "N";
+        $tmp .= (string)$this->internalAllowDynamic;
         $tmp .= $this->internalAddParentDevices ? "Y" : "N";
         $this->internalCacheKey = md5($tmp);
     }
@@ -220,14 +222,16 @@ class InterfaceField extends BaseListField
 
     /**
      * select if dynamic (hotplug) interfaces maybe selectable
-     * @param $value boolean value 0/1
+     * @param $value Y/N/S (Yes, No, Static)
      */
     public function setAllowDynamic($value)
     {
         if (trim(strtoupper($value)) == "Y") {
-            $this->internalAllowDynamic = true;
+            $this->internalAllowDynamic = 1;
+        } elseif (trim(strtoupper($value)) == "S") {
+            $this->internalAllowDynamic = 2;
         } else {
-            $this->internalAllowDynamic = false;
+            $this->internalAllowDynamic = 0;
         }
         $this->updateInternalCacheKey();
     }

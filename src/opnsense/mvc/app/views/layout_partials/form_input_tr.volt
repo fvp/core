@@ -81,13 +81,13 @@
             ></select>{% if style|default('selectpicker') != "tokenize" %}<br />{% endif %}
             <a href="#" class="text-danger" id="clear-options_{{ id }}"><i class="fa fa-times-circle"></i> <small>{{ lang._('Clear All') }}</small></a>
         {% elseif type == "dropdown" %}
-            <select {% if size|default(false) %}size="{{size}}"{% endif %} id="{{ id }}" class="{{style|default('selectpicker')}}" data-width="{{width|default("334px")}}"></select>
+            <select data-size="{{size|default(10)}}" id="{{ id }}" class="{{style|default('selectpicker')}}" data-width="{{width|default("334px")}}"></select>
         {% elseif type == "password" %}
             <input type="password" class="form-control {{style|default('')}}" size="{{size|default("50")}}" id="{{ id }}" {{ readonly|default(false) ? 'readonly="readonly"' : '' }} >
         {% elseif type == "textbox" %}
             <textarea class="{{style|default('')}}" rows="{{height|default("5")}}" id="{{ id }}" {{ readonly|default(false) ? 'readonly="readonly"' : '' }}></textarea>
         {% elseif type == "info" %}
-            <span  class="{style|default('')}}" id="{{ id }}"></span>
+            <span  class="{{style|default('')}}" id="{{ id }}"></span>
         {% endif %}
         {% if help|default(false) %}
             <div class="hidden" data-for="help_for_{{ id }}">

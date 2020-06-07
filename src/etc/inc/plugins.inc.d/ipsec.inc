@@ -154,7 +154,6 @@ function ipsec_syslog()
 
     $logfacilities['ipsec'] = array(
         'facility' => array('charon'),
-        'remote' => 'vpn',
     );
 
     return $logfacilities;
@@ -204,7 +203,7 @@ function ipsec_interfaces()
         foreach (ipsec_get_configured_vtis() as $intf => $details) {
             $interfaces[$intf] = [
                 'enable' => true,
-                'descr' => $details['descr'],
+                'descr' => preg_replace('/[^a-z_0-9]/i', '', $details['descr']),
                 'if' => $intf,
                 'type' => 'none',
             ];
@@ -1349,8 +1348,19 @@ function ipsec_configure_do($verbose = false, $interface = '')
                 }
 
                 $rightsourceip = null;
-                if (!empty($a_client['pool_address']) && isset($ph1ent['mobile'])) {
-                    $rightsourceip = "\trightsourceip = {$a_client['pool_address']}/{$a_client['pool_netbits']}\n";
+                if (
+                    isset($ph1ent['mobile']) &&
+                      (!empty($a_client['pool_address']) || !empty($a_client['pool_address_v6']))
+                ) {
+                    $rightsourceip = "\trightsourceip = ";
+                    if (!empty($a_client['pool_address'])) {
+                        $rightsourceip .= "{$a_client['pool_address']}/{$a_client['pool_netbits']}";
+                    }
+                    if (!empty($a_client['pool_address_v6'])) {
+                        $rightsourceip .= (!empty($a_client['pool_address']) ? "," : "");
+                        $rightsourceip .= "{$a_client['pool_address_v6']}/{$a_client['pool_netbits_v6']}";
+                    }
+                    $rightsourceip .= "\n";
                 }
 
                 $authentication = "";

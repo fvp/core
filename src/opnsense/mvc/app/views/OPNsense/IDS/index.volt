@@ -62,27 +62,31 @@ POSSIBILITY OF SUCH DAMAGE.
         /**
          * list all known classtypes and add to selection box
          */
-        function updateRuleClassTypes() {
-            ajaxGet("/api/ids/settings/listRuleClasstypes", {}, function(data, status) {
+        function updateRuleMetadata() {
+            ajaxGet("/api/ids/settings/listRuleMetadata", {}, function(data, status) {
                 if (status == "success") {
-                    $('#ruleclass').html('<option value="">ALL</option>');
-                    $.each(data['items'], function(key, value) {
-                        $('#ruleclass').append($("<option></option>").attr("value",value).text(value));
+                    $('#rulemetadata').empty();
+                    $.each(Object.assign({}, {'action': ['drop', 'alert']}, data), function(key, values) {
+                        let $optgroup = $("<optgroup/>");
+                        $optgroup.prop('label', key);
+                        for (let i=0; i < values.length ; ++i) {
+                            $optgroup.append(
+                              $("<option>").val(values[i]).text(values[i].substr(0, 50))
+                                .data('property', key)
+                                .data('value', values[i])
+                                .data('content', "<span class='badge'>"+key+"\\"+values[i].substr(0, 50)+"</span>")
+                            );
+                        }
+                        $('#rulemetadata').append($optgroup);
                     });
                     $('.selectpicker').selectpicker('refresh');
                     // link on change event
-                    $('#ruleclass').on('change', function(){
+                    $('#rulemetadata').on('change', function(){
                         $('#grid-installedrules').bootgrid('reload');
                     });
                 }
             });
         }
-        /**
-         * link on change event for alert "action" selectionbox
-         */
-        $('#ruleaction').on('change', function(){
-            $('#grid-installedrules').bootgrid('reload');
-        });
 
         /**
          * update list of available alert logs
@@ -111,14 +115,14 @@ POSSIBILITY OF SUCH DAMAGE.
          * Add classtype / action to rule filter
          */
         function addRuleFilters(request) {
-            var selected =$('#ruleclass').find("option:selected").val();
-            if ( selected != "") {
-                request['classtype'] = selected;
-            }
-            var selected =$('#ruleaction').find("option:selected").val();
-            if ( selected != "") {
-                request['action'] = selected;
-            }
+            $('#rulemetadata').find("option:selected").each(function(){
+                let filter_name = $(this).data('property');
+                if (request[filter_name] === undefined) {
+                    request[filter_name] = $(this).data('value');
+                } else {
+                    request[filter_name] += "," + $(this).data('value');
+                }
+            });
             return request;
         }
 
@@ -147,6 +151,14 @@ POSSIBILITY OF SUCH DAMAGE.
 
         // load initial data
         function loadGeneralSettings() {
+            // hide detect_custom fields when not applicable
+            $("#ids\\.general\\.detect\\.Profile").change(function(){
+                if ($("#ids\\.general\\.detect\\.Profile").val() == "custom") {
+                    $(".detect_custom").closest("tr").removeClass("hidden");
+                } else {
+                    $(".detect_custom").closest("tr").addClass("hidden");
+                }
+            });
             mapDataToFormUI(data_get_map).done(function(data){
                 // set schedule updates link to cron
                 $.each(data.frm_GeneralSettings.ids.general.UpdateCron, function(key, value) {
@@ -160,22 +172,6 @@ POSSIBILITY OF SUCH DAMAGE.
             });
         }
 
-        /**
-         * save (general) settings and reconfigure
-         * @param callback_funct: callback function, receives result status true/false
-         */
-        function actionReconfigure(callback_funct) {
-            var result_status = false;
-            saveFormToEndpoint("/api/ids/settings/set", 'frm_GeneralSettings', function(){
-                ajaxCall("/api/ids/service/reconfigure", {}, function(data,status) {
-                    if (status == "success" || data['status'].toLowerCase().trim() == "ok") {
-                        result_status = true;
-                    }
-                    $('#scheduled_updates').show();
-                    callback_funct(result_status);
-                });
-            });
-        }
 
         /**
          * toggle selected items
@@ -323,7 +319,7 @@ POSSIBILITY OF SUCH DAMAGE.
                 //
 
                 // delay refresh for a bit
-                setTimeout(updateRuleClassTypes, 500);
+                setTimeout(updateRuleMetadata, 500);
 
                 /**
                  * grid installed rules
@@ -346,6 +342,33 @@ POSSIBILITY OF SUCH DAMAGE.
                                         }
                                         return toggle;
                                     }
+                                },
+                                onBeforeRenderDialog: function(payload) {
+                                    // update form with dynamic fields
+                                    let template_tr = $("#row___template__");
+                                    $(".__rule__metadata_record").remove();
+                                    template_tr.hide();
+                                    if (payload.frm_DialogRule) {
+                                        $.each(payload.frm_DialogRule, function(key, value){
+                                            // ignore fixed fields and empty values
+                                            if (['sid', 'rev', 'action', 'action_default', 'installed_action',
+                                                 'enabled', 'enabled_default', 'msg', 'reference'].includes(key)
+                                                 || value === null) {
+                                                return;
+                                            }
+                                            let new_tr = template_tr.clone();
+                                            new_tr.prop("id", "row_" + key);
+                                            new_tr.addClass("__rule__metadata_record");
+                                            new_tr.html(new_tr.html().replace('__template__label__', key));
+                                            if (key === 'reference_html') {
+                                                value = $("<textarea/>").html(value).text();
+                                            }
+                                            new_tr.find("#__template__").prop("id", key).html(value);
+                                            new_tr.show();
+                                            new_tr.insertBefore(template_tr);
+                                        });
+                                    }
+                                    return (new $.Deferred()).resolve();
                                 }
                             },
                             toggle:'/api/ids/settings/toggleRule/'
@@ -560,22 +583,14 @@ POSSIBILITY OF SUCH DAMAGE.
         /**
          * save settings and reconfigure ids
          */
-        $("#reconfigureAct").click(function(){
-            $("#reconfigureAct_progress").addClass("fa fa-spinner fa-pulse");
-            actionReconfigure(function(status){
-                // when done, disable progress animation.
-                $("#reconfigureAct_progress").removeClass("fa fa-spinner fa-pulse");
-                updateStatus();
-
-                if (!status) {
-                    BootstrapDialog.show({
-                        type: BootstrapDialog.TYPE_WARNING,
-                        title: "{{ lang._('Error reconfiguring IDS') }}",
-                        message: data['status'],
-                        draggable: true
-                    });
-                }
-            });
+        $("#reconfigureAct").SimpleActionButton({
+            onPreAction: function() {
+                const dfObj = new $.Deferred();
+                saveFormToEndpoint("/api/ids/settings/set", 'frm_GeneralSettings', function(){
+                    dfObj.resolve();
+                });
+                return dfObj;
+            }
         });
         $("#updateSettings").click(function(){
             $("#updateSettings_progress").addClass("fa fa-spinner fa-pulse");
@@ -596,25 +611,15 @@ POSSIBILITY OF SUCH DAMAGE.
         /**
          * update (userdefined) rules
          */
-        $(".act_update").click(function(){
-            $(".act_update_progress").addClass("fa fa-spinner fa-pulse");
-            ajaxCall("/api/ids/service/reloadRules", {}, function(data,status) {
-                // when done, disable progress animation.
-                $(".act_update_progress").removeClass("fa fa-spinner fa-pulse");
-            });
-        });
+        $(".act_update").SimpleActionButton();
 
         /**
          * update rule definitions
          */
-        $("#updateRulesAct").click(function(){
-            $("#updateRulesAct_progress").addClass("fa fa-spinner fa-pulse");
-            ajaxCall("/api/ids/service/updateRules", {}, function(data,status) {
-                // when done, disable progress animation and reload grid.
+        $("#updateRulesAct").SimpleActionButton({
+            onAction: function(){
                 $('#grid-rule-files').bootgrid('reload');
-                updateStatus();
-                $("#updateRulesAct_progress").removeClass("fa fa-spinner fa-pulse");
-            });
+            }
         });
 
         /**
@@ -688,7 +693,6 @@ POSSIBILITY OF SUCH DAMAGE.
             });
 
         });
-
     });
 
 
@@ -707,7 +711,13 @@ POSSIBILITY OF SUCH DAMAGE.
         {{ partial("layout_partials/base_form",['fields':formGeneralSettings,'id':'frm_GeneralSettings'])}}
         <div class="col-md-12">
             <hr/>
-            <button class="btn btn-primary" id="reconfigureAct" type="button"><b>{{ lang._('Apply') }}</b> <i id="reconfigureAct_progress" class=""></i></button>
+            <button class="btn btn-primary" id="reconfigureAct"
+                    data-endpoint='/api/ids/service/reconfigure'
+                    data-label="{{ lang._('Apply') }}"
+                    data-error-title="{{ lang._('Error reconfiguring IDS') }}"
+                    data-service-widget="ids"
+                    type="button"
+            ></button>
             <br/>
             <br/>
         </div>
@@ -789,7 +799,14 @@ POSSIBILITY OF SUCH DAMAGE.
           </div>
           <hr/>
           <button class="btn btn-primary" style="display:none" id="updateSettings" type="button"><b>{{ lang._('Save') }}</b> <i id="updateSettings_progress" class=""></i></button>
-          <button class="btn btn-primary" id="updateRulesAct" type="button"><b>{{ lang._('Download & Update Rules') }}</b> <i id="updateRulesAct_progress" class=""></i></button>
+
+          <button class="btn btn-primary" id="updateRulesAct"
+                  data-endpoint='/api/ids/service/updateRules'
+                  data-label="{{ lang._('Download & Update Rules') }}"
+                  data-error-title="{{ lang._('Error reconfiguring IDS') }}"
+                  data-service-widget="ids"
+                  type="button"
+          ></button>
           <br/><br/>
       </div>
     </div>
@@ -797,14 +814,7 @@ POSSIBILITY OF SUCH DAMAGE.
         <div class="bootgrid-header container-fluid">
             <div class="row">
                 <div class="col-sm-12 actionBar">
-                    <b>{{ lang._('Classtype') }} &nbsp;</b>
-                    <select id="ruleclass" class="selectpicker" data-width="200px"></select>
-                    &nbsp;
-                    <b>{{ lang._('Action') }} &nbsp;</b>
-                    <select id="ruleaction" class="selectpicker" data-width="100px">
-                        <option value="">{{ lang._('All') }}</option>
-                        <option value="drop">{{ lang._('Drop') }}</option>
-                        <option value="alert">{{ lang._('Alert') }}</option>
+                    <select id="rulemetadata" title="{{ lang._('Filters') }}" class="selectpicker" multiple=multiple data-live-search="true" data-size="10" data-width="100%">
                     </select>
                 </div>
             </div>
@@ -841,7 +851,12 @@ POSSIBILITY OF SUCH DAMAGE.
                 {{ lang._('After changing settings, please remember to apply them with the button below') }}
             </div>
             <hr/>
-            <button class="btn btn-primary act_update" type="button"><b>{{ lang._('Apply') }}</b> <i class="act_update_progress"></i></button>
+            <button class="btn btn-primary act_update"
+                    data-endpoint='/api/ids/service/reloadRules'
+                    data-label="{{ lang._('Apply') }}"
+                    data-error-title="{{ lang._('Error reconfiguring IDS') }}"
+                    type="button"
+            ></button>
             <br/>
             <br/>
         </div>
@@ -875,7 +890,12 @@ POSSIBILITY OF SUCH DAMAGE.
                 {{ lang._('After changing settings, please remember to apply them with the button below') }}
             </div>
             <hr/>
-            <button class="btn btn-primary act_update" type="button"><b>{{ lang._('Apply') }}</b> <i class="act_update_progress"></i></button>
+            <button class="btn btn-primary act_update"
+                    data-endpoint='/api/ids/service/reloadRules'
+                    data-label="{{ lang._('Apply') }}"
+                    data-error-title="{{ lang._('Error reconfiguring IDS') }}"
+                    type="button"
+            ></button>
             <br/>
             <br/>
         </div>

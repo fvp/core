@@ -28,8 +28,8 @@
 
 namespace OPNsense\Routing;
 
-use \OPNsense\Core\Config;
-use \OPNsense\Firewall\Util;
+use OPNsense\Core\Config;
+use OPNsense\Firewall\Util;
 
 /**
  * Class Gateways
@@ -158,7 +158,7 @@ class Gateways
             // iterate configured gateways
             if (!empty($this->configHandle->gateways)) {
                 foreach ($this->configHandle->gateways->children() as $tag => $gateway) {
-                    if ($tag == "gateway_item") {
+                    if ($tag == "gateway_item" && !empty($gateway)) {
                         $reservednames[] = (string)$gateway->name;
                         $gw_arr = array();
                         foreach ($gateway as $key => $value) {
@@ -167,6 +167,10 @@ class Gateways
                         if (empty($gw_arr['priority'])) {
                             // default priority
                             $gw_arr['priority'] = 255;
+                        }
+                        if (empty($gw_arr['ipprotocol'])) {
+                            // default address family
+                            $gw_arr['ipprotocol'] = 'inet';
                         }
                         $gw_arr["if"] = $definedIntf[$gw_arr["interface"]]['if'];
                         $gw_arr["attribute"] = $i++;
@@ -240,7 +244,10 @@ class Gateways
                         }
                         $gwkey = $this->newKey($thisconf['priority'], !empty($thisconf['defaultgw']));
                         $this->cached_gateways[$gwkey] = $thisconf;
-                    } elseif (substr($ifcfg['if'], 0, 5) == "ovpnc") {
+                    } elseif (!empty($ifcfg['gateway_interface']) || substr($ifcfg['if'], 0, 5) == "ovpnc") {
+                        // XXX: ditch ovpnc in a major upgrade in the future, supersede with interface setting
+                        //      gateway_interface
+
                         // other predefined types, only bound by interface (e.g. openvpn)
                         $gwkey = $this->newKey($thisconf['priority'], !empty($thisconf['defaultgw']));
                         // gateway should only contain a valid address, make sure its empty

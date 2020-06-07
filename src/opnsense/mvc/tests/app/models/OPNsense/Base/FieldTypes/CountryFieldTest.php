@@ -34,7 +34,7 @@ namespace tests\OPNsense\Base\FieldTypes;
 require_once 'Field_Framework_TestCase.php';
 // @CodingStandardsIgnoreEnd
 
-use \OPNsense\Base\FieldTypes\CountryField;
+use OPNsense\Base\FieldTypes\CountryField;
 
 class CountryFieldTest extends Field_Framework_TestCase
 {
@@ -123,6 +123,20 @@ class CountryFieldTest extends Field_Framework_TestCase
         $field->eventPostLoading();
         $field->setMultiple("Y");
         $field->setValue('NL,DE');
+        $this->assertEmpty($this->validate($field));
+    }
+
+    /**
+     *
+     * @depends testCanBeCreated
+     */
+    public function testInverseOption()
+    {
+        // init field
+        $field = new CountryField();
+        $field->setAddInverted("Y");
+        $field->setValue('!NL');
+        $field->eventPostLoading();
         $this->assertEmpty($this->validate($field));
     }
 

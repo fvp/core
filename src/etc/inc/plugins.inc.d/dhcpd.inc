@@ -253,10 +253,18 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
             $realtrackif = get_real_interface($config['interfaces'][$dhcpv6if]['track6-interface'], 'inet6');
 
             $trackmtu = legacy_interface_stats($realtrackif)['mtu'];
-            if (!empty($trackmtu)) {
+            if (!empty($trackmtu) && !empty($mtu)) {
                 if ($trackmtu < $mtu) {
                     $mtu = $trackmtu;
                 }
+            }
+        }
+
+        if (!empty($dhcpv6ifconf['AdvLinkMTU']) && !empty($mtu)) {
+            if ($dhcpv6ifconf['AdvLinkMTU'] < $mtu) {
+                $mtu = $dhcpv6ifconf['AdvLinkMTU'];
+            } else {
+                log_error('Warning! Skipping AdvLinkMTU configuration since it cannot be applied.');
             }
         }
 
@@ -268,7 +276,7 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
         if (!empty($dhcpv6ifconf['AdvDefaultLifetime'])) {
             $radvdconf .= sprintf("\tAdvDefaultLifetime %s;\n", $dhcpv6ifconf['AdvDefaultLifetime']);
         }
-        $radvdconf .= sprintf("\tAdvLinkMTU %s;\n", !empty($mtu) ? $mtu : 1280);
+        $radvdconf .= sprintf("\tAdvLinkMTU %s;\n", !empty($mtu) ? $mtu : 0);
 
         switch ($dhcpv6ifconf['rapriority']) {
             case "low":
@@ -302,7 +310,7 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
 
         $stanzas = array();
 
-        list ($ifcfgipv6, $networkv6) = dhcpd_getaddr6($dhcpv6if, $realif, $ifconfig_details);
+        list ($ifcfgipv6, $networkv6) = interfaces_primary_address6($dhcpv6if, $realif, $ifconfig_details);
         if (is_subnetv6($networkv6)) {
             $stanzas[] = $networkv6;
         }
@@ -324,19 +332,16 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
                 case 'managed':
                     $radvdconf .= "\t\tAdvOnLink on;\n";
                     $radvdconf .= "\t\tAdvAutonomous off;\n";
-                    $radvdconf .= "\t\tAdvRouterAddr on;\n";
                     break;
                 case 'router':
                     $radvdconf .= "\t\tAdvOnLink off;\n";
                     $radvdconf .= "\t\tAdvAutonomous off;\n";
-                    $radvdconf .= "\t\tAdvRouterAddr on;\n";
                     break;
                 case 'assist':
                 case 'unmanaged':
                 case 'stateless':
                     $radvdconf .= "\t\tAdvOnLink on;\n";
                     $radvdconf .= "\t\tAdvAutonomous on;\n";
-                    $radvdconf .= "\t\tAdvRouterAddr on;\n";
                     break;
                 default:
                     break;
@@ -449,7 +454,7 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
 
         $mtu = legacy_interface_stats($realif)['mtu'];
         $trackmtu = legacy_interface_stats($realtrackif)['mtu'];
-        if (!empty($trackmtu)) {
+        if (!empty($trackmtu) && !empty($mtu)) {
             if ($trackmtu < $mtu) {
                 $mtu = $trackmtu;
             }
@@ -457,7 +462,7 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
 
         $dnslist = array();
 
-        list ($ifcfgipv6, $networkv6) = dhcpd_getaddr6($if, $realif, $ifconfig_details);
+        list ($ifcfgipv6, $networkv6) = interfaces_primary_address6($if, $realif, $ifconfig_details);
 
         if ($autotype == 'slaac') {
             /* XXX this may be incorrect and needs an override or revisit */
@@ -483,20 +488,41 @@ function dhcpd_radvd_configure($verbose = false, $blacklist = array())
         $radvdconf .= "# Generated config for {$autotype} delegation from {$trackif} on {$if}\n";
         $radvdconf .= "interface {$realif} {\n";
         $radvdconf .= "\tAdvSendAdvert on;\n";
-        $radvdconf .= "\tMinRtrAdvInterval 3;\n";
-        $radvdconf .= "\tMaxRtrAdvInterval 10;\n";
-        $radvdconf .= sprintf("\tAdvLinkMTU %s;\n", !empty($mtu) ? $mtu : 1280);
+        $radvdconf .= sprintf("\tAdvLinkMTU %s;\n", !empty($mtu) ? $mtu : 0);
+        $radvdconf .= "\tAdvManagedFlag on;\n";
         $radvdconf .= "\tAdvOtherConfigFlag on;\n";
-        $radvdconf .= "\tprefix {$networkv6} {\n";
-        if ($autotype == 'slaac') {
-            /* XXX also of interest in the future, see hardcoded prefix above */
-            $radvdconf .= "\t\tBase6Interface $realtrackif;\n";
-            $radvdconf .= "\t\tDeprecatePrefix on;\n";
+
+        if (!empty($networkv6)) {
+            $radvdconf .= "\tprefix {$networkv6} {\n";
+            if ($autotype == 'slaac') {
+                /* XXX also of interest in the future, see hardcoded prefix above */
+                $radvdconf .= "\t\tBase6Interface $realtrackif;\n";
+                $radvdconf .= "\t\tDeprecatePrefix on;\n";
+            }
+            /* XXX DeprecatePrefix on crashes radvd on 12.1 */
+            $radvdconf .= "\t\tAdvOnLink on;\n";
+            $radvdconf .= "\t\tAdvAutonomous on;\n";
+            $radvdconf .= "\t};\n";
         }
-        $radvdconf .= "\t\tAdvOnLink on;\n";
-        $radvdconf .= "\t\tAdvAutonomous on;\n";
-        $radvdconf .= "\t\tAdvRouterAddr on;\n";
-        $radvdconf .= "\t};\n";
+
+        foreach (config_read_array('virtualip', 'vip') as $vip) {
+            if ($vip['interface'] != $if || !is_ipaddrv6($vip['subnet'])) {
+                continue;
+            }
+
+            $subnetv6 = gen_subnetv6($vip['subnet'], $vip['subnet_bits']);
+            $vipnetv6 = "{$subnetv6}/{$vip['subnet_bits']}";
+
+            if ($vipnetv6 == $networkv6) {
+                continue;
+            }
+
+            $radvdconf .= "\tprefix {$vipnetv6} {\n";
+            $radvdconf .= "\t\tDeprecatePrefix on;\n";
+            $radvdconf .= "\t\tAdvOnLink on;\n";
+            $radvdconf .= "\t\tAdvAutonomous on;\n";
+            $radvdconf .= "\t};\n";
+        }
 
         if (count($dnslist) > 0) {
             $radvdconf .= "\tRDNSS " . implode(" ", $dnslist) . " { };\n";
@@ -1244,7 +1270,7 @@ function dhcpd_dhcp6_configure($verbose = false, $blacklist = array())
             continue;
         }
         if (!empty($config['interfaces'][$ifname]['track6-interface'])) {
-            list ($ifcfgipv6) = dhcpd_getaddr6($ifname, get_real_interface($ifname, 'inet6'), $ifconfig_details);
+            list ($ifcfgipv6) = interfaces_primary_address6($ifname, null, $ifconfig_details);
             if (!is_ipaddrv6($ifcfgipv6)) {
                 continue;
             }
@@ -1285,11 +1311,13 @@ function dhcpd_dhcp6_configure($verbose = false, $blacklist = array())
                     $dhcpdv6cfg[$ifname]['prefixrange']['to'] = Net_IPv6::compress($range['end']);
                 }
             } else {
-                /* get config entry and marry it to the live prefix */
-                $dhcpdv6cfg[$ifname]['range'] = array(
-                    'from' => make_ipv6_64_address($ifcfgipv6, $dhcpdv6cfg[$ifname]['range']['from']),
-                    'to' => make_ipv6_64_address($ifcfgipv6, $dhcpdv6cfg[$ifname]['range']['to']),
-                );
+                if (!empty($dhcpdv6cfg[$ifname]['range']['from']) && !empty($dhcpdv6cfg[$ifname]['range']['to'])) {
+                    /* get config entry and marry it to the live prefix */
+                    $dhcpdv6cfg[$ifname]['range'] = array(
+                        'from' => make_ipv6_64_address($ifcfgipv6, $dhcpdv6cfg[$ifname]['range']['from']),
+                        'to' => make_ipv6_64_address($ifcfgipv6, $dhcpdv6cfg[$ifname]['range']['to']),
+                    );
+                }
 
                 if (!empty($dhcpdv6cfg[$ifname]['prefixrange']['from']) && !empty($dhcpdv6cfg[$ifname]['prefixrange']['to'])) {
                     $pd_prefix_from_array = explode(':', $dhcpdv6cfg[$ifname]['prefixrange']['from']);
@@ -1396,9 +1424,7 @@ EOD;
             continue;
         }
 
-        $realif = get_real_interface($dhcpv6if, 'inet6');
-
-        list ($ifcfgipv6, $networkv6) = dhcpd_getaddr6($dhcpv6if, $realif, $ifconfig_details);
+        list ($ifcfgipv6, $networkv6) = interfaces_primary_address6($dhcpv6if, null, $ifconfig_details);
         if (!is_ipaddrv6($ifcfgipv6) || !is_subnetv6($networkv6)) {
             log_error("Warning! dhcpd_dhcp6_configure() found no suitable IPv6 address on {$dhcpv6if}");
             continue;
@@ -1834,31 +1860,4 @@ function dhcpd_dhcrelay6_configure($verbose = false)
     if ($verbose) {
         echo "done.\n";
     }
-}
-
-function dhcpd_getaddr6($interface, $realif, $ifconfig_details = null)
-{
-    $ifcfgipv6 = $networkv6 = null;
-
-    foreach (interfaces_addresses($realif, true, $ifconfig_details) as $tmpaddr => $info) {
-        if ($info['family'] != 'inet6' || $info['scope']) {
-            /* only care about IPv6 without a scope set */
-            continue;
-        }
-
-        $addrparts = explode('/', $tmpaddr);
-
-        foreach (config_read_array('virtualip', 'vip') as $vip) {
-            if ($vip['interface'] == $interface && $vip['mode'] == 'ipalias' && $vip['subnet'] == $addrparts[0]) {
-                /* do not care about alias */
-                continue 2;
-            }
-        }
-
-        $networkv6 = gen_subnetv6($addrparts[0], $addrparts[1]) . "/{$addrparts[1]}";
-        $ifcfgipv6 = $addrparts[0];
-        break; /* all done */
-    }
-
-    return [ $ifcfgipv6, $networkv6 ];
 }

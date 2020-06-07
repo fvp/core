@@ -435,12 +435,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $pconfig['lock'] = isset($a_interfaces[$if]['lock']);
     $pconfig['blockpriv'] = isset($a_interfaces[$if]['blockpriv']);
     $pconfig['blockbogons'] = isset($a_interfaces[$if]['blockbogons']);
+    $pconfig['gateway_interface'] =  isset($a_interfaces[$if]['gateway_interface']);
     $pconfig['dhcpoverridemtu'] = empty($a_interfaces[$if]['dhcphonourmtu']) ? true : null;
     $pconfig['dhcp6-ia-pd-send-hint'] = isset($a_interfaces[$if]['dhcp6-ia-pd-send-hint']);
     $pconfig['dhcp6prefixonly'] = isset($a_interfaces[$if]['dhcp6prefixonly']);
     $pconfig['dhcp6usev4iface'] = isset($a_interfaces[$if]['dhcp6usev4iface']);
-    $pconfig['dhcp6norelease'] = isset($a_interfaces[$if]['dhcp6norelease']);
-    $pconfig['adv_dhcp6_debug'] = isset($a_interfaces[$if]['adv_dhcp6_debug']);
     $pconfig['track6-prefix-id--hex'] = sprintf("%x", empty($pconfig['track6-prefix-id']) ? 0 : $pconfig['track6-prefix-id']);
     $pconfig['dhcpd6track6allowoverride'] = isset($a_interfaces[$if]['dhcpd6track6allowoverride']);
 
@@ -576,12 +575,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pconfig = $_POST;
+
     $input_errors = array();
     if (!empty($_POST['if']) && !empty($a_interfaces[$_POST['if']])) {
         $if = $_POST['if'];
         // read physcial interface name from config.xml
         $pconfig['if'] = $a_interfaces[$if]['if'];
     }
+    $ifgroup = !empty($_GET['group']) ? $_GET['group'] : "";
 
     if (!empty($pconfig['apply'])) {
         if (!is_subsystem_dirty('interfaces')) {
@@ -608,7 +609,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             }
         }
         @unlink('/tmp/.interfaces.apply');
-        header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+        if (!empty($ifgroup)) {
+            header(url_safe('Location: /interfaces.php?if=%s&group=%s', array($if, $ifgroup)));
+        } else {
+            header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+        }
         exit;
     } elseif (empty($pconfig['enable'])) {
         if (isset($a_interfaces[$if]['enable'])) {
@@ -622,6 +627,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if (isset($a_interfaces[$if]['wireless'])) {
             interface_sync_wireless_clones($a_interfaces[$if], false);
         }
+        $a_interfaces[$if]['descr'] = preg_replace('/[^a-z_0-9]/i', '', $pconfig['descr']);
 
         write_config("Interface {$pconfig['descr']}({$if}) is now disabled.");
         mark_subsystem_dirty('interfaces');
@@ -638,7 +644,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $toapplylist[$if]['ppps'] = $a_ppps;
             file_put_contents('/tmp/.interfaces.apply', serialize($toapplylist));
         }
-        header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+        if (!empty($ifgroup)) {
+            header(url_safe('Location: /interfaces.php?if=%s&group=%s', array($if, $ifgroup)));
+        } else {
+            header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+        }
         exit;
     } else {
         // locate sequence in ppp list
@@ -669,9 +679,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if ($pconfig['type'] != 'none' || $pconfig['type6'] != 'none') {
             foreach (plugins_devices() as $device) {
                 if (!isset($device['configurable']) || $device['configurable'] == true) {
-                  continue;
+                    continue;
                 }
-                if (preg_match('/' . $device['pattern'] . '/', $ifport)) {
+                if (preg_match('/' . $device['pattern'] . '/', $pconfig['if'])) {
                     $input_errors[] = gettext('Cannot assign an IP configuration type to a tunnel interface.');
                 }
             }
@@ -691,6 +701,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         }
                     }
                 }
+                break;
             case "dhcp":
                 if (!empty($pconfig['adv_dhcp_config_file_override'] && !file_exists($pconfig['adv_dhcp_config_file_override_path']))) {
                     $input_errors[] = sprintf(gettext('The DHCP override file "%s" does not exist.'), $pconfig['adv_dhcp_config_file_override_path']);
@@ -1045,6 +1056,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             $new_config['blockpriv'] = !empty($pconfig['blockpriv']);
             $new_config['blockbogons'] = !empty($pconfig['blockbogons']);
+            $new_config['gateway_interface'] = !empty($pconfig['gateway_interface']);
             if (!empty($pconfig['mtu'])) {
                 $new_config['mtu'] = $pconfig['mtu'];
             }
@@ -1185,13 +1197,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     if (!empty($pconfig['dhcp6usev4iface'])) {
                         $new_config['dhcp6usev4iface'] = true;
                     }
-                    if (!empty($pconfig['dhcp6norelease'])) {
-                        $new_config['dhcp6norelease'] = true;
-                    }
                     if (isset($pconfig['dhcp6vlanprio']) && $pconfig['dhcp6vlanprio'] !== '') {
                         $new_config['dhcp6vlanprio'] = $pconfig['dhcp6vlanprio'];
                     }
-                    $new_config['adv_dhcp6_debug'] = !empty($pconfig['adv_dhcp6_debug']);
                     $new_config['adv_dhcp6_interface_statement_send_options'] = $pconfig['adv_dhcp6_interface_statement_send_options'];
                     $new_config['adv_dhcp6_interface_statement_request_options'] = $pconfig['adv_dhcp6_interface_statement_request_options'];
                     $new_config['adv_dhcp6_interface_statement_information_only_enable'] = $pconfig['adv_dhcp6_interface_statement_information_only_enable'];
@@ -1395,7 +1403,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             mark_subsystem_dirty('interfaces');
 
-            header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+            if (!empty($ifgroup)) {
+                header(url_safe('Location: /interfaces.php?if=%s&group=%s', array($if, $ifgroup)));
+            } else {
+                header(url_safe('Location: /interfaces.php?if=%s', array($if)));
+            }
             exit;
         }
     }
@@ -1969,6 +1981,18 @@ include("head.inc");
                         </tr>
 <?php
                         endif;?>
+                        <tr>
+                          <td><a id="help_for_gateway_interface" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?= gettext('Dynamic gateway policy') ?></td>
+                          <td>
+                            <input id="gateway_interface" name="gateway_interface" type="checkbox" value="yes" <?=!empty($pconfig['gateway_interface']) ? 'checked="checked"' : '' ?>/>
+                            <strong><?= gettext('This interface does not require an intermediate system to act as a gateway') ?></strong>
+                            <div class="hidden" data-for="help_for_gateway_interface">
+                              <?=gettext("If the destination is directly reachable via an interface requiring no " .
+                              "intermediary system to act as a gateway, you can select this option which allows dynamic gateways " .
+                              "to be created without direct target addresses. Some tunnel types support this."); ?>
+                            </div>
+                          </td>
+                        </tr>
                       </tbody>
                     </table>
                   </div>
@@ -2747,24 +2771,6 @@ include("head.inc");
                           </td>
                         </tr>
                         <tr>
-                          <td><a id="help_for_dhcp6norelease" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Prevent release"); ?></td>
-                          <td>
-                            <input name="dhcp6norelease" type="checkbox" id="dhcp6norelease" value="yes" <?= !empty($pconfig['dhcp6norelease']) ? 'checked="checked"' : '' ?> />
-                            <div class="hidden" data-for="help_for_dhcp6norelease">
-                              <?=gettext("Do not send a release message on client exit to prevent the release of an allocated address or prefix on the server."); ?>
-                            </div>
-                          </td>
-                        </tr>
-                        <tr>
-                            <td><a id="help_for_dhcp6_debug" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Enable debug"); ?></td>
-                            <td>
-                              <input name="adv_dhcp6_debug" type="checkbox" id="adv_dhcp6_debug" value="yes" <?=!empty($pconfig['adv_dhcp6_debug']) ? "checked=\"checked\"" : ""; ?> />
-                              <div class="hidden" data-for="help_for_dhcp6_debug">
-                                <?=gettext("Enable debug mode for DHCPv6 client"); ?>
-                              </div>
-                            </td>
-                        </tr>
-                        <tr>
                           <td><a id="help_for_dhcp6usev4iface" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Use IPv4 connectivity"); ?></td>
                           <td>
                             <input name="dhcp6usev4iface" type="checkbox" id="dhcp6usev4iface" value="yes" <?=!empty($pconfig['dhcp6usev4iface']) ? "checked=\"checked\"" : ""; ?> />
@@ -3053,7 +3059,7 @@ include("head.inc");
                             <input name="dhcpd6track6allowoverride" type="checkbox" value="yes" <?= $pconfig['dhcpd6track6allowoverride'] ? 'checked="checked"' : '' ?>/>
                             <?= gettext('Allow manual adjustment of DHCPv6 and Router Advertisements') ?>
                             <div class="hidden" data-for="help_for_dhcpd6_opt">
-                              <?= gettext('If this option is set, you will be able to manually set the DHCPv6 and Router Advertisments service for this interface. Use with care.') ?>
+                              <?= gettext('If this option is set, you will be able to manually set the DHCPv6 and Router Advertisements service for this interface. Use with care.') ?>
                             </div>
                           </td>
                         </tr>

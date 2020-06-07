@@ -147,6 +147,67 @@ function filter_delete_states_for_down_gateways()
     }
 }
 
+/**
+ * sync interface groups, but leave the ones not managed by us intact.
+ */
+function ifgroup_setup()
+{
+    global $config;
+    $all_ifgroups = array();
+    $all_ifs = array();
+    $interface_details = legacy_interfaces_details();
+    if (isset($config['ifgroups']['ifgroupentry'])) {
+        foreach ($config['ifgroups']['ifgroupentry'] as $group) {
+            $all_ifgroups[$group['ifname']] = array();
+            foreach (explode(" ", $group['members']) as $member) {
+                if (!empty($config['interfaces'][$member])) {
+                    $if = $config['interfaces'][$member]['if'];
+                    if (!isset($all_ifs[$if])) {
+                        $all_ifs[$if] = array();
+                    }
+                    $all_ifs[$if][] = $group['ifname'];
+                    $all_ifgroups[$group['ifname']][] = $if;
+                }
+            }
+        }
+    }
+    foreach ($interface_details as $intf => $details) {
+        $thisifgroups = !empty($details['groups']) ? $details['groups'] : array();
+        foreach ($thisifgroups as $ifgroup) {
+            if (isset($all_ifgroups[$ifgroup]) && !in_array($intf, $all_ifgroups[$ifgroup])) {
+                // detach
+                mwexecf('/sbin/ifconfig %s -group %s', array($intf, $ifgroup));
+            }
+        }
+        if (!empty($all_ifs[$intf])) {
+            foreach ($all_ifs[$intf] as $ifgroup) {
+                if (!in_array($ifgroup, $thisifgroups)) {
+                    // attach
+                    mwexecf('/sbin/ifconfig %s group %s', array($intf, $ifgroup));
+                }
+            }
+        }
+    }
+}
+
+/**
+ * XXX: replace with check on interfaces section (see pf_interfaces)
+ */
+function is_interface_group($if)
+{
+    global $config;
+
+    if (isset($config['ifgroups']['ifgroupentry'])) {
+        foreach ($config['ifgroups']['ifgroupentry'] as $groupentry) {
+            if ($groupentry['ifname'] === $if) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 function filter_configure_sync($verbose = false, $flush_states = false, $load_aliases = true)
 {
     global $config;
@@ -159,6 +220,12 @@ function filter_configure_sync($verbose = false, $flush_states = false, $load_al
 
     /* Use filter lock to not allow concurrent filter reloads during this run. */
     $filterlck = lock('filter', LOCK_EX);
+
+    ifgroup_setup();
+    if ($verbose) {
+        echo '.';
+        flush();
+    }
 
     // initialize fw plugin object
     $fw = filter_core_get_initialized_plugin_system();
@@ -351,10 +418,15 @@ function filter_configure_sync($verbose = false, $flush_states = false, $load_al
 
     if (!empty($config['system']['maximumtableentries'])) {
         $limitrules .= "set limit table-entries {$config['system']['maximumtableentries']}\n";
+        set_single_sysctl('net.pf.request_maxcount', $config['system']['maximumtableentries']);
     } elseif (is_bogonsv6_used()) {
         $max_table_entries = default_table_entries_size();
-        if ($max_table_entries <= 500000) {
-            $limitrules .= "set limit table-entries 500000\n";
+        $req_table_entries = 1000000;
+        if ($max_table_entries <= $req_table_entries) {
+            $limitrules .= "set limit table-entries {$req_table_entries}\n";
+            set_single_sysctl('net.pf.request_maxcount', $req_table_entries);
+        } else {
+            set_single_sysctl('net.pf.request_maxcount', $max_table_entries);
         }
     }
 
@@ -456,11 +528,13 @@ function filter_configure_sync($verbose = false, $flush_states = false, $load_al
         /* Brutal ugly hack but required -- PF is stuck, unwedge */
         if (strstr("$rules_error[0]", "busy")) {
             exec('/sbin/pfctl -d; /sbin/pfctl -e; /sbin/pfctl -f /tmp/rules.debug');
+            log_error('PF was wedged/busy and has been reset.');
             file_notice(gettext('PF was wedged/busy and has been reset.'));
         } else {
             exec('/sbin/pfctl -o basic -f /tmp/rules.debug.old 2>&1');
         }
 
+        log_error(sprintf('There were error(s) loading the rules: %s%s', $rules_error[0], $config_line));
         file_notice(sprintf(gettext('There were error(s) loading the rules: %s%s'), $rules_error[0], $config_line));
         unlock($filterlck);
 
@@ -617,17 +691,19 @@ function filter_generate_aliases()
     }
 
     $aliases .= "\n# User Aliases\n";
-    foreach ((new \OPNsense\Firewall\Alias())->aliasIterator() as $aliased) {
+    $aliasObject = new \OPNsense\Firewall\Alias();
+    foreach ($aliasObject->aliasIterator() as $aliased) {
         switch ($aliased['type']) {
             case "urltable_ports":
             case "url_ports":
                 # a bit of a hack, but prevents the ruleset from not being able to load if these types are in
                 # the configuration.
                 $aliases .= "{$aliased['name']} = \"{ 0 <> 65535 }\"\n";
+                log_error(sprintf('URL port aliases types not supported [%s]', $aliased['name']));
                 file_notice(sprintf(gettext('URL port aliases types not supported [%s]'), $aliased['name']));
                 break;
             case "port":
-                $tmp_ports = implode(" ", filter_core_get_port_alias($aliased['name']));
+                $tmp_ports = implode(" ", filter_core_get_port_alias($aliased['name'], array(), $aliasObject));
                 $aliases .= "{$aliased['name']} = \"{ {$tmp_ports} }\"\n";
                 break;
             default:

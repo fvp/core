@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 
 """
-    Copyright (c) 2015-2019 Ad Schellevis <ad@opnsense.org>
+    Copyright (c) 2020 Ad Schellevis <ad@opnsense.org>
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -26,19 +26,33 @@
     POSSIBILITY OF SUCH DAMAGE.
 
     --------------------------------------------------------------------------------------
-
-    script to fetch all classtypes from the installed suricata rules using the shared rule cache:
+    dump sockstat
 """
-
+import subprocess
+import os
+import sys
 import ujson
-from lib.rulecache import RuleCache
+import netaddr
 
 if __name__ == '__main__':
-    rc = RuleCache()
-    if rc.is_changed():
-        rc.create()
-
-    items = rc.list_class_types()
-    result = {'items': items, 'count': len(items)}
-
+    result = []
+    for line in subprocess.run(['/usr/bin/sockstat'], capture_output=True, text=True).stdout.split('\n')[1:]:
+        parts = line.split()
+        if len(parts) >= 6:
+            record = {
+                'user': parts[0],
+                'command': parts[1],
+                'pid': parts[2],
+                'fd': parts[3],
+                'proto': parts[4],
+                'local': "",
+                'remote': ""
+            }
+            if parts[5] == '->':
+                record['local'] = parts[6]
+            else:
+                record['local'] = parts[5]
+                if len(parts) > 6:
+                    record['remote'] = parts[6]
+            result.append(record)
     print(ujson.dumps(result))

@@ -1,7 +1,7 @@
 <?php
 
 /*
- * Copyright (C) 2015-2018 Franco Fichtner <franco@opnsense.org>
+ * Copyright (C) 2015-2020 Franco Fichtner <franco@opnsense.org>
  * Copyright (C) 2004-2008 Scott Ullrich <sullrich@gmail.com>
  * Copyright (C) 2008-2009 Ermal Luçi
  * Copyright (C) 2005 Espen Johansen
@@ -962,8 +962,6 @@ function interfaces_configure($verbose = false)
     plugins_configure('ipsec_prepare', $verbose);
     plugins_configure('openvpn_prepare', $verbose);
     plugins_configure('vxlan_prepare', $verbose);
-
-    interfaces_group_setup();
 }
 
 function interface_vip_bring_down($vip)
@@ -1092,7 +1090,8 @@ function interface_bring_down($interface = "wan", $ifacecfg = false)
     switch ($ifcfg['ipaddrv6']) {
         case 'slaac':
         case 'dhcp6':
-            killbypid("/var/run/dhcp6c_{$realifv6}.pid", 'TERM', true);
+            interface_dhcpv6_prepare($interface, $ifcfg, true);
+            killbypid('/var/run/dhcp6c.pid', 'HUP');
             break;
         case 'track6':
             interface_track6_configure($interface, $ifcfg, false, true);
@@ -1158,6 +1157,7 @@ function interface_bring_down($interface = "wan", $ifacecfg = false)
     @unlink("/tmp/{$realifv6}upv6");
     @unlink("/tmp/{$realif}_router");
     @unlink("/tmp/{$realifv6}_routerv6");
+    @unlink("/tmp/{$realifv6}_pdinfo");
 }
 
 function interfaces_ptpid_used($ptpid)
@@ -1276,7 +1276,7 @@ function interface_ppps_configure($interface)
                 }
                 break;
             default:
-                log_error("Unkown {$ppp['type']} configured as ppp interface.");
+                log_error("Unknown {$ppp['type']} configured as PPP interface.");
                 break;
         }
     }
@@ -2561,11 +2561,6 @@ function interface_configure($verbose = false, $interface = 'wan', $reload = fal
                 interface_bridge_add_member($bridgetmp, $realif);
             }
         }
-
-        $grouptmp = link_interface_to_group($interface);
-        if (!empty($grouptmp)) {
-            array_walk($grouptmp, 'interface_group_add_member');
-        }
     }
 
     if ($verbose) {
@@ -2607,8 +2602,7 @@ function interface_track6_configure($interface = 'lan', $lancfg, $linkupevent = 
             case 'slaac':
             case 'dhcp6':
                 interface_dhcpv6_prepare($lancfg['track6-interface'], $trackcfg);
-                $parentrealif = get_real_interface($lancfg['track6-interface'], 'inet6');
-                killbypid("/var/run/dhcp6c_{$parentrealif}.pid", 'HUP');
+                killbypid('/var/run/dhcp6c.pid', 'HUP');
                 break;
             default:
                 break;
@@ -2631,8 +2625,7 @@ function interface_track6_configure($interface = 'lan', $lancfg, $linkupevent = 
         case 'dhcp6':
             if ($linkupevent) {
                 interface_dhcpv6_prepare($lancfg['track6-interface'], $trackcfg);
-                $parentrealif = get_real_interface($lancfg['track6-interface'], 'inet6');
-                killbypid("/var/run/dhcp6c_{$parentrealif}.pid", 'HUP');
+                killbypid('/var/run/dhcp6c.pid', 'HUP');
             }
             break;
     }
@@ -2904,11 +2897,11 @@ function interface_6to4_configure($interface = 'wan', $wancfg)
 
 function interface_dhcpv6_configure($interface = 'wan', $wancfg)
 {
-    global $config;
+    $syscfg = config_read_array('system');
 
     /* write DUID if override was set */
-    if (!empty($config['system']['ipv6duid'])) {
-        dhcp6c_duid_write($config['system']['ipv6duid']);
+    if (!empty($syscfg['ipv6duid'])) {
+        dhcp6c_duid_write($syscfg['ipv6duid']);
     /* clear DUID if it is faulty */
     } elseif (empty(dhcp6c_duid_read())) {
         dhcp6c_duid_clear();
@@ -2926,86 +2919,69 @@ function interface_dhcpv6_configure($interface = 'wan', $wancfg)
     mwexecf('/sbin/ifconfig %s inet6 accept_rtadv -ifdisabled', $realifv6);
 
     /* Enable RFC6204w support for IPv6 Customer Edge (CE) router */
-    set_single_sysctl("net.inet6.ip6.rfc6204w3", "1");
+    set_single_sysctl('net.inet6.ip6.rfc6204w3', '1');
 
     /* always kill rtsold in case of reconfigure */
-    killbypid("/var/run/rtsold_{$realifv6}.pid", 'TERM', true);
+    killbypid('/var/run/rtsold.pid', 'TERM', true);
 
-    /* fire up rtsold for IPv6 RAs first */
-    mwexecf(
-        '/usr/sbin/rtsold -p %s -O %s -R %s %s %s',
+    $rtsoldcommand = exec_safe(
+        '/usr/sbin/rtsold -p %s -O %s -R %s -a',
         array(
-            "/var/run/rtsold_{$realifv6}.pid",
-            "/var/etc/rtsold_{$realifv6}_script.sh",
+            '/var/run/rtsold.pid',
+            '/var/etc/rtsold_script.sh',
             '/usr/bin/true', /* XXX missing proper script to refresh resolv.conf */
-            empty($wancfg['adv_dhcp6_debug']) ? '-d' : '-D',
-            $realifv6
         )
     );
 
+    if (!empty($syscfg['dhcp6_debug'])) {
+        $mode = [ '1' => ' -d', '2' => ' -D' ];
+        $rtsoldcommand .= $mode[$syscfg['dhcp6_debug']];
+    }
+
+    /* fire up rtsold for IPv6 RAs first */
+    mwexec($rtsoldcommand);
+
     /* unconditional trigger for hybrid approach, reloads without advertisements */
-    mwexec("/var/etc/rtsold_{$realifv6}_script.sh");
+    mwexecf('/var/etc/rtsold_script.sh %s', array($realifv6));
 }
 
-function interface_dhcpv6_prepare($interface = 'wan', $wancfg)
+function interface_dhcpv6_id($interface)
+{
+    global $config;
+
+    /* configuration default */
+    $id = 0;
+
+    if (empty($config['interfaces'])) {
+        return $id;
+    }
+
+    /* detect unique index */
+    foreach (array_keys($config['interfaces']) as $key) {
+        if ($key == $interface) {
+            break;
+        }
+        $id += 1;
+    }
+
+    return $id;
+}
+
+function interface_dhcpv6_prepare($interface = 'wan', $wancfg, $linkdownevent = false)
 {
     if (!is_array($wancfg)) {
         return;
     }
 
     $wanif = get_real_interface($interface, 'inet6');
+    $id = interface_dhcpv6_id($interface);
+    $syscfg = config_read_array('system');
 
-    $dhcp6cconf = "interface {$wanif} {\n";
-
-    /* for SLAAC interfaces we do fire off a dhcp6 client for just our name servers */
-    if ($wancfg['ipaddrv6'] == "slaac") {
-        $dhcp6cconf .= "  information-only;\n";
-        $dhcp6cconf .= "  request domain-name-servers;\n";
-        $dhcp6cconf .= "  request domain-name;\n";
-        $dhcp6cconf .= "  script \"/var/etc/dhcp6c_{$interface}_script.sh\"; # we'd like some nameservers please\n";
-        $dhcp6cconf .= "};\n";
-    } else {
-        /* skip address request if this is set */
-        if (!isset($wancfg['dhcp6prefixonly'])) {
-            $dhcp6cconf .= "  send ia-na 0; # request stateful address\n";
-        }
-        if (is_numeric($wancfg['dhcp6-ia-pd-len'])) {
-            $dhcp6cconf .= "  send ia-pd 0; # request prefix delegation\n";
-        }
-
-        $dhcp6cconf .= "  request domain-name-servers;\n";
-        $dhcp6cconf .= "  request domain-name;\n";
-        $dhcp6cconf .= "  script \"/var/etc/dhcp6c_{$interface}_script.sh\"; # we'd like some nameservers please\n";
-
-        $dhcp6cconf .= "};\n";
-
-        if (!isset($wancfg['dhcp6prefixonly'])) {
-            $dhcp6cconf .= "id-assoc na 0 { };\n";
-        }
-
-        if (is_numeric($wancfg['dhcp6-ia-pd-len'])) {
-            /* Setup the prefix delegation */
-            $dhcp6cconf .= "id-assoc pd 0 {\n";
-            if (isset($wancfg['dhcp6-ia-pd-send-hint'])) {
-                $preflen = 64 - $wancfg['dhcp6-ia-pd-len'];
-                $dhcp6cconf .= "  prefix ::/{$preflen} infinity;\n";
-            }
-            foreach (link_interface_to_track6($interface) as $friendly => $ifcfg) {
-                if (is_numeric($ifcfg['track6-prefix-id'])) {
-                    $trackifv6 = get_real_interface($friendly, 'inet6');
-                    $dhcp6cconf .= "  prefix-interface {$trackifv6} {\n";
-                    $dhcp6cconf .= "    sla-id {$ifcfg['track6-prefix-id']};\n";
-                    $dhcp6cconf .= "    sla-len {$wancfg['dhcp6-ia-pd-len']};\n";
-                    $dhcp6cconf .= "  };\n";
-                }
-            }
-            $dhcp6cconf .= "};\n";
-        }
-    }
+    $dhcp6cconf = DHCP6_Config_File_Basic($interface, $wancfg, $wanif, $id);
 
     // DHCP6 Config File Advanced
     if ($wancfg['adv_dhcp6_config_advanced']) {
-        $dhcp6cconf = DHCP6_Config_File_Advanced($interface, $wancfg, $wanif);
+        $dhcp6cconf = DHCP6_Config_File_Advanced($interface, $wancfg, $wanif, $id);
     }
 
     // DHCP6 Config File Override
@@ -3019,16 +2995,23 @@ function interface_dhcpv6_prepare($interface = 'wan', $wancfg)
         }
     }
 
-    if (!@file_put_contents("/var/etc/dhcp6c_{$interface}.conf", $dhcp6cconf)) {
-        log_error("Error: cannot open dhcp6c_{$interface}.conf in interface_dhcpv6_configure() for writing.");
+    if (!$linkdownevent) {
+        @file_put_contents("/var/etc/dhcp6c_{$interface}.conf", $dhcp6cconf);
+    } else {
+        @unlink("/var/etc/dhcp6c_{$interface}.conf");
     }
 
     $dhcp6cscript = "#!/bin/sh\n";
-    $dhcp6cscript .= "if [ -n '" . (!empty($wancfg['adv_dhcp6_debug']) ? 'debug' : '') . "' ]; then\n";
+    $dhcp6cscript .= "if [ -z \"\${PDINFO}\" ]; then\n";
+    $dhcp6cscript .= "\trm -f /tmp/{$wanif}_pdinfo\n";
+    $dhcp6cscript .= "else\n";
+    $dhcp6cscript .= "\techo \${PDINFO} > /tmp/{$wanif}_pdinfo\n";
+    $dhcp6cscript .= "fi\n";
+    $dhcp6cscript .= "if [ -n '" . (!empty($syscfg['dhcp6_debug']) ? 'debug' : '') . "' ]; then\n";
     $dhcp6cscript .= "\t/usr/bin/logger -t dhcp6c \"dhcp6c \$REASON on {$wanif}\"\n";
     $dhcp6cscript .= "fi\n";
     $dhcp6cscript .= "case \$REASON in\n";
-    $dhcp6cscript .= "REQUEST|" . (!empty($wancfg['dhcp6norelease']) ? 'EXIT' : 'RELEASE') . ")\n";
+    $dhcp6cscript .= "REQUEST|" . (!empty($syscfg['dhcp6_norelease']) ? 'EXIT' : 'RELEASE') . ")\n";
     $dhcp6cscript .= "\t/usr/bin/logger -t dhcp6c \"dhcp6c \$REASON on {$wanif} - running newipv6\"\n";
     $dhcp6cscript .= "\t/usr/local/opnsense/service/configd_ctl.py interface newipv6 {$wanif}\n";
     $dhcp6cscript .= "\t;;\n";
@@ -3036,44 +3019,131 @@ function interface_dhcpv6_prepare($interface = 'wan', $wancfg)
     $dhcp6cscript .= "\t;;\n";
     $dhcp6cscript .= "esac\n";
 
-    if (!@file_put_contents("/var/etc/dhcp6c_{$interface}_script.sh", $dhcp6cscript)) {
-        log_error("Error: cannot open dhcp6c_{$interface}_script.sh in interface_dhcpv6_configure() for writing.");
-        return;
-    }
-
-    chmod("/var/etc/dhcp6c_{$interface}_script.sh", 0755);
+    @file_put_contents("/var/etc/dhcp6c_{$interface}_script.sh", $dhcp6cscript);
+    @chmod("/var/etc/dhcp6c_{$interface}_script.sh", 0755);
 
     $dhcp6ccommand = exec_safe(
-        "/usr/local/sbin/dhcp6c %s -c %s -p %s %s",
+        '/usr/local/sbin/dhcp6c -c %s -p %s',
         array(
-            '-' . (empty($wancfg['adv_dhcp6_debug']) ? 'd' : 'D' ) . (!empty($wancfg['dhcp6norelease']) ? 'n' : ''),
-            "/var/etc/dhcp6c_{$interface}.conf",
-            "/var/run/dhcp6c_{$wanif}.pid",
-            "{$wanif}"
+            '/var/etc/dhcp6c.conf',
+            '/var/run/dhcp6c.pid',
         )
     );
 
-    $rtsoldscript = "#!/bin/sh\n";
-    $rtsoldscript .= "# this file was auto-generated, do not edit\n";
-    $rtsoldscript .= "if [ -n \"\${2}\" ]; then\n";
-    $rtsoldscript .= "\techo \${2} > /tmp/{$wanif}_routerv6\n";
-    $rtsoldscript .= "\techo \${2} > /tmp/{$wanif}_defaultgwv6\n";
-    $rtsoldscript .= "fi\n";
-    $rtsoldscript .= "if [ -f /var/run/dhcp6c_{$wanif}.pid ]; then\n";
-    $rtsoldscript .= "\t/usr/bin/logger -t dhcp6c \"RTSOLD script - Sending SIGHUP to dhcp6c for interface {$interface}({$wanif})\"\n";
-    $rtsoldscript .= "\t/bin/pkill -HUP -F /var/run/dhcp6c_{$wanif}.pid\n";
-    $rtsoldscript .= "else\n";
-    $rtsoldscript .= "\t/usr/bin/logger -t dhcp6c \"RTSOLD script - Starting dhcp6 client for interface {$interface}({$wanif})\"\n";
-    $rtsoldscript .= "\t$dhcp6ccommand\n";
-    $rtsoldscript .= "fi\n";
+    if (!empty($syscfg['dhcp6_debug'])) {
+        $mode = [ '1' => ' -d', '2' => ' -D' ];
+        $dhcp6ccommand .= $mode[$syscfg['dhcp6_debug']];
+    }
 
-    @file_put_contents("/var/etc/rtsold_{$wanif}_script.sh", $rtsoldscript);
-    @chmod("/var/etc/rtsold_{$wanif}_script.sh", 0755);
+    if (!empty($syscfg['dhcp6_norelease'])) {
+        $dhcp6ccommand .= ' -n';
+    }
+
+    $dhcp6cconf = '';
+
+    /* merge configs and prepare single instance of dhcp6c for startup */
+    foreach (legacy_config_get_interfaces(['enable' => true, 'virtual' => false]) as $_interface => $_wancfg) {
+        if (empty($_wancfg['ipaddrv6']) || $_wancfg['ipaddrv6'] != 'dhcp6') {
+            continue;
+        }
+
+        if (!file_exists("/var/etc/dhcp6c_{$_interface}.conf")) {
+            /* config file not yet rendered, defer for later */
+            continue;
+        }
+
+        $dhcp6cconf .= file_get_contents("/var/etc/dhcp6c_{$_interface}.conf");
+    }
+
+    @file_put_contents('/var/etc/dhcp6c.conf', $dhcp6cconf);
+
+    $rtsold_script = <<<EOD
+#!/bin/sh
+# this file was auto-generated, do not edit
+if [ -z "\${1}" ]; then
+    echo "Nothing to do."
+    exit 0
+fi
+if [ -n "\${2}" ]; then
+    echo \${2} > /tmp/\${1}_routerv6
+    echo \${2} > /tmp/\${1}_defaultgwv6
+fi
+if [ -f /var/run/dhcp6c.pid ]; then
+    if ! /bin/pkill -0 -F /var/run/dhcp6c.pid; then
+        rm -f /var/run/dhcp6c.pid
+    fi
+fi
+if [ -f /var/run/dhcp6c.pid ]; then
+    /usr/bin/logger -t dhcp6c "RTSOLD script - Sending SIGHUP to dhcp6c"
+    /bin/pkill -HUP -F /var/run/dhcp6c.pid
+else
+    /usr/bin/logger -t dhcp6c "RTSOLD script - Starting dhcp6 client"
+    {$dhcp6ccommand}
+fi
+
+EOD;
+
+    @file_put_contents('/var/etc/rtsold_script.sh', $rtsold_script);
+    @chmod('/var/etc/rtsold_script.sh', 0755);
 }
 
-function DHCP6_Config_File_Advanced($interface, $wancfg, $wanif)
+function DHCP6_Config_File_Basic($interface, $wancfg, $wanif, $id = 0)
+{
+    $dhcp6cconf = "interface {$wanif} {\n";
+
+    /* for SLAAC interfaces we do fire off a dhcp6 client for just our name servers */
+    if ($wancfg['ipaddrv6'] == "slaac") {
+        $dhcp6cconf .= "  information-only;\n";
+        $dhcp6cconf .= "  request domain-name-servers;\n";
+        $dhcp6cconf .= "  request domain-name;\n";
+        $dhcp6cconf .= "  script \"/var/etc/dhcp6c_{$interface}_script.sh\"; # we'd like some nameservers please\n";
+        $dhcp6cconf .= "};\n";
+    } else {
+        /* skip address request if this is set */
+        if (!isset($wancfg['dhcp6prefixonly'])) {
+            $dhcp6cconf .= "  send ia-na {$id}; # request stateful address\n";
+        }
+        if (is_numeric($wancfg['dhcp6-ia-pd-len'])) {
+            $dhcp6cconf .= "  send ia-pd {$id}; # request prefix delegation\n";
+        }
+
+        $dhcp6cconf .= "  request domain-name-servers;\n";
+        $dhcp6cconf .= "  request domain-name;\n";
+        $dhcp6cconf .= "  script \"/var/etc/dhcp6c_{$interface}_script.sh\"; # we'd like some nameservers please\n";
+
+        $dhcp6cconf .= "};\n";
+
+        if (!isset($wancfg['dhcp6prefixonly'])) {
+            $dhcp6cconf .= "id-assoc na {$id} { };\n";
+        }
+
+        if (is_numeric($wancfg['dhcp6-ia-pd-len'])) {
+            /* Setup the prefix delegation */
+            $dhcp6cconf .= "id-assoc pd {$id} {\n";
+            if (isset($wancfg['dhcp6-ia-pd-send-hint'])) {
+                $preflen = 64 - $wancfg['dhcp6-ia-pd-len'];
+                $dhcp6cconf .= "  prefix ::/{$preflen} infinity;\n";
+            }
+            foreach (link_interface_to_track6($interface) as $friendly => $lancfg) {
+                if (is_numeric($lancfg['track6-prefix-id'])) {
+                    $trackifv6 = get_real_interface($friendly, 'inet6');
+                    $dhcp6cconf .= "  prefix-interface {$trackifv6} {\n";
+                    $dhcp6cconf .= "    sla-id {$lancfg['track6-prefix-id']};\n";
+                    $dhcp6cconf .= "    sla-len {$wancfg['dhcp6-ia-pd-len']};\n";
+                    $dhcp6cconf .= "  };\n";
+                }
+            }
+            $dhcp6cconf .= "};\n";
+        }
+    }
+
+    return $dhcp6cconf;
+}
+
+function DHCP6_Config_File_Advanced($interface, $wancfg, $wanif, $id = 0)
 {
     $send_options = "";
+
     if ($wancfg['adv_dhcp6_interface_statement_send_options'] != '') {
         $options = preg_split('/\s*,\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/', $wancfg['adv_dhcp6_interface_statement_send_options']);
         foreach ($options as $option) {
@@ -3112,7 +3182,7 @@ function DHCP6_Config_File_Advanced($interface, $wancfg, $wanif)
         if (is_numeric($wancfg['adv_dhcp6_id_assoc_statement_address_id'])) {
             $id_assoc_statement_address .= "{$wancfg['adv_dhcp6_id_assoc_statement_address_id']}";
         } else {
-            $id_assoc_statement_address .= '0';
+            $id_assoc_statement_address .= $id;
         }
         $id_assoc_statement_address .= " {\n";
 
@@ -3142,7 +3212,7 @@ function DHCP6_Config_File_Advanced($interface, $wancfg, $wanif)
         if (is_numeric($wancfg['adv_dhcp6_id_assoc_statement_prefix_id'])) {
             $id_assoc_statement_prefix .= "{$wancfg['adv_dhcp6_id_assoc_statement_prefix_id']}";
         } else {
-            $id_assoc_statement_prefix .= '0';
+            $id_assoc_statement_prefix .= $id;
         }
         $id_assoc_statement_prefix .= " {\n";
 
@@ -3163,11 +3233,11 @@ function DHCP6_Config_File_Advanced($interface, $wancfg, $wanif)
             $id_assoc_statement_prefix .= ";\n";
         }
 
-        foreach (link_interface_to_track6($interface) as $friendly => $ifcfg) {
-            if (is_numeric($ifcfg['track6-prefix-id'])) {
+        foreach (link_interface_to_track6($interface) as $friendly => $lancfg) {
+            if (is_numeric($lancfg['track6-prefix-id'])) {
                 $trackifv6 = get_real_interface($friendly, 'inet6');
                 $id_assoc_statement_prefix .= "  prefix-interface {$trackifv6} {\n";
-                $id_assoc_statement_prefix .= "    sla-id {$ifcfg['track6-prefix-id']};\n";
+                $id_assoc_statement_prefix .= "    sla-id {$lancfg['track6-prefix-id']};\n";
                 if (
                     ($wancfg['adv_dhcp6_prefix_interface_statement_sla_len'] >= 0) &&
                     ($wancfg['adv_dhcp6_prefix_interface_statement_sla_len'] <= 128)
@@ -3447,50 +3517,6 @@ function DHCP_Config_File_Substitutions($wancfg, $wanif, $dhclientconf)
     return $dhclientconf;
 }
 
-function interfaces_group_setup()
-{
-    global $config;
-
-    if (!isset($config['ifgroups']['ifgroupentry'])) {
-        return;
-    }
-
-    foreach ($config['ifgroups']['ifgroupentry'] as $groupar) {
-        interface_group_setup($groupar);
-    }
-}
-
-function interface_group_setup(&$groupname)
-{
-    if (!is_array($groupname)) {
-        return;
-    }
-
-    $members = explode(' ', $groupname['members']);
-    foreach ($members as $ifs) {
-        interface_group_add_member($ifs, $groupname['ifname']);
-    }
-}
-
-function is_interface_group($if)
-{
-    global $config;
-
-    if (isset($config['ifgroups']['ifgroupentry'])) {
-        foreach ($config['ifgroups']['ifgroupentry'] as $groupentry) {
-            if ($groupentry['ifname'] === $if) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-function interface_group_add_member($interface, $groupname)
-{
-    mwexecf('/sbin/ifconfig %s group %s', array(get_real_interface($interface), $groupname));
-}
 
 /* convert fxp0 -> wan, etc. */
 function convert_real_interface_to_friendly_interface_name($interface = 'wan')
@@ -4034,10 +4060,9 @@ function get_interface_ipv6($interface = 'wan', $ifconfig_details = null)
         return get_configured_carp_interface_list($interface, 'inet6');
     }
 
-    $realif = get_real_interface($interface, 'inet6');
+    list ($ipv6) = interfaces_primary_address6($interface, null, $ifconfig_details);
 
-    return isset($config['interfaces'][$interface]['dhcp6prefixonly']) ?
-        find_interface_ipv6_ll($realif, $ifconfig_details) : find_interface_ipv6($realif, $ifconfig_details);
+    return $ipv6;
 }
 
 /****f* interfaces/is_interface_wireless
@@ -4128,19 +4153,25 @@ function interfaces_staticarp_configure($if)
     }
 }
 
-//returns interface information
 function get_interfaces_info()
 {
     global $config;
-    $result = array();
+
     $all_intf_details = legacy_interfaces_details();
+    $all_intf_stats = legacy_interface_stats();
     $gateways = new \OPNsense\Routing\Gateways($all_intf_details);
     $ifup = legacy_interface_listget('up');
-    $all_intf_stats = legacy_interface_stats();
-    foreach (legacy_config_get_interfaces(array("virtual" => false)) as $ifdescr => $ifcnf) {
+    $result = array();
+
+    foreach (legacy_config_get_interfaces(array('virtual' => false)) as $ifdescr => $ifcnf) {
         $ifinfo = array();
+
         $ifinfo['if'] = get_real_interface($ifdescr);
+        $ifinfo['ifv6'] = get_real_interface($ifdescr, 'inet6');
+
         $ifinfo['status'] = (is_array($ifup) && in_array($ifinfo['if'], $ifup)) ? 'up' : 'down';
+        $ifinfo['statusv6'] = (is_array($ifup) && in_array($ifinfo['ifv6'], $ifup)) ? 'up' : 'down';
+
         if (!empty($all_intf_details[$ifinfo['if']])) {
             if (
                 isset($all_intf_details[$ifinfo['if']]['status']) &&
@@ -4151,7 +4182,14 @@ function get_interfaces_info()
             $ifinfo = array_merge($ifinfo, $all_intf_details[$ifinfo['if']]);
         }
 
+        /* XXX apparently we ignore a different IPv6 realif completely... */
         if (!empty($ifinfo['ipv6'])) {
+            /* XXX ... so avoid intermediate breakage by using IPv4 realif here */
+            list ($primary6, $unused, $subnet6) = interfaces_primary_address6($ifdescr, $ifinfo['if'], $all_intf_details);
+            if (!empty($primary6)) {
+                $ifinfo['ipaddrv6'] = $primary6;
+                $ifinfo['subnetv6'] = $subnet6;
+            }
             foreach ($ifinfo['ipv6'] as $ipv6addr) {
                 if (!empty($ipv6addr['link-local'])) {
                     $ifinfo['linklocal'] = $ipv6addr['ipaddr'];
@@ -4161,9 +4199,16 @@ function get_interfaces_info()
                 }
             }
         }
+
         if (!empty($ifinfo['ipv4'])) {
             $ifinfo['ipaddr'] = $ifinfo['ipv4'][0]['ipaddr'];
             $ifinfo['subnet'] = $ifinfo['ipv4'][0]['subnetbits'];
+        }
+
+        /* XXX there are more magic files */
+        $aux = @file_get_contents("/tmp/{$ifinfo['ifv6']}_pdinfo");
+        if (!empty($aux)) {
+            $ifinfo['pdinfo'] = $aux;
         }
 
         $ifinfotmp = $all_intf_stats[$ifinfo['if']];
@@ -4578,4 +4623,47 @@ function interfaces_addresses($interfaces, $as_subnet = false, $ifconfig_details
     }
 
     return $result;
+}
+
+function interfaces_primary_address6($interface, $realif = null, $ifconfig_details = null)
+{
+    $ifcfgipv6 = $networkv6 = $subnetbitsv6 = null;
+
+    if ($realif === null) {
+        $realif = get_real_interface($interface, 'inet6');
+    }
+
+    $interfaces_a = config_read_array('interfaces');
+
+    foreach (interfaces_addresses($realif, true, $ifconfig_details) as $tmpaddr => $info) {
+        if ($info['family'] != 'inet6') {
+            continue;
+        }
+
+        if (!isset($interfaces_a[$interface]['dhcp6prefixonly'])) {
+            if ($info['scope']) {
+                continue;
+            }
+        } else {
+            if (!$info['scope']) {
+                continue;
+            }
+        }
+
+        $addrparts = explode('/', $tmpaddr);
+
+        foreach (config_read_array('virtualip', 'vip') as $vip) {
+            if ($vip['interface'] == $interface && $vip['mode'] == 'ipalias' && $vip['subnet'] == $addrparts[0]) {
+                /* do not care about alias */
+                continue 2;
+            }
+        }
+
+        $networkv6 = gen_subnetv6($addrparts[0], $addrparts[1]) . "/{$addrparts[1]}";
+        $subnetbitsv6 = $addrparts[1];
+        $ifcfgipv6 = $addrparts[0];
+        break; /* all done */
+    }
+
+    return [ $ifcfgipv6, $networkv6, $subnetbitsv6 ];
 }
