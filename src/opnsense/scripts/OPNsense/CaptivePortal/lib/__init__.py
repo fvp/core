@@ -26,20 +26,20 @@
 """
 import os.path
 import stat
+import yaml
 import xml.etree.ElementTree
-from configparser import ConfigParser
 
 
 class Config(object):
-    """ handle to captive portal config (/usr/local/etc/captiveportal.conf)
+    """ handle to captive portal config (/usr/local/etc/captiveportal.yaml)
     """
-    _cnf_filename = "/usr/local/etc/captiveportal.conf"
+    _cnf_filename = "/usr/local/etc/captiveportal.yaml"
 
     def __init__(self):
         """ consctruct new config object
         """
         self.last_updated = 0
-        self._conf_handle = None
+        self._zones = None
         self._update()
 
     def _update(self):
@@ -47,45 +47,58 @@ class Config(object):
         """
         mod_time = os.stat(self._cnf_filename)[stat.ST_MTIME]
         if os.path.exists(self._cnf_filename) and self.last_updated != mod_time:
-            self._conf_handle = ConfigParser()
-            self._conf_handle.read(self._cnf_filename)
-            self.last_updated = mod_time
+            confFile = open(self._cnf_filename, 'r')
+            if confFile:            
+                confYaml = yaml.load(confFile, Loader=yaml.BaseLoader)
+                self._process_yaml(confYaml)
+                self.last_updated = mod_time
+
+    def _process_yaml(self, confYaml):
+        """ return list of configured zones
+            :return: dictionary index by zoneid, containing dictionaries with zone properties
+        """
+        self._zones = dict()
+        if 'zones' in confYaml:
+            for zone in confYaml['zones']:
+                self._zones[zone['id']] = zone 
+                if 'macAccess' in zone:
+                    passMacs = dict()
+                    blockMacs = dict()
+                    for mac in zone['macAccess']: 
+                        if mac['action'] == 'pass':
+                            passMacs[mac['mac']] = mac
+                        elif mac['action'] == 'block':
+                            blockMacs[mac['mac']] = mac      
+                    zone['passMacAccess'] = passMacs
+                    zone['blockMacAccess'] = blockMacs
+                if 'ipAccess' in zone:
+                    ips = dict()
+                    for ip in zone['ipAccess']: 
+                        ips[ip['ip']] = ip  
+                    zone['ipAccess'] = ips                                                
 
     def get_zones(self):
         """ return list of configured zones
             :return: dictionary index by zoneid, containing dictionaries with zone properties
         """
-        result = dict()
         self._update()
-        if self._conf_handle is not None:
-            for section in self._conf_handle.sections():
-                if section.find('zone_') == 0:
-                    zoneid = section.split('_')[1]
-                    result[zoneid] = dict()
-                    for item in self._conf_handle.items(section):
-                        result[zoneid][item[0]] = item[1]
-                    # convert allowed(MAC)addresses string to list
-                    if 'allowedaddresses' in result[zoneid] and result[zoneid]['allowedaddresses'].strip() != '':
-                        result[zoneid]['allowedaddresses'] = \
-                            [x.strip() for x in result[zoneid]['allowedaddresses'].split(',')]
-                    else:
-                        result[zoneid]['allowedaddresses'] = list()
-                    if 'allowedmacaddresses' in result[zoneid] and result[zoneid]['allowedmacaddresses'].strip() != '':
-                        result[zoneid]['allowedmacaddresses'] = \
-                            [x.strip() for x in result[zoneid]['allowedmacaddresses'].split(',')]
-                    else:
-                        result[zoneid]['allowedmacaddresses'] = list()
-        return result
+        if self._zones is not None:
+            return self._zones           
+                
+        return dict()
 
-    def fetch_template_data(self, zoneid):
-        """ fetch template content from config
-        """
-        for section in self._conf_handle.sections():
-            if section.find('template_for_zone_') == 0 and section.split('_')[-1] == str(zoneid):
-                if self._conf_handle.has_option(section, 'content'):
-                    return self._conf_handle.get(section, 'content')
+    def get_zone(self, zoneid):
+        zones = self.get_zones()
+        if zoneid in zones:
+            return zones[zoneid]
         return None
 
+    def fetch_template_data(self, zoneid):
+        zone = self.get_zone(zoneid)
+        if zone is not None and 'template' in zone:
+            return zone['template']
+        return None    
+            
 
 class OPNsenseConfig(object):
     """ Read configuration data from config.xml

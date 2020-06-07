@@ -1,0 +1,33 @@
+<form>
+    <field>
+        <id>ipRule.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Enable this rule.</help>
+    </field>    
+    <field>
+        <id>ipRule.ip</id>
+        <label>IP Address</label>
+        <type>text</type>
+    </field>
+    <field>
+        <id>ipRule.description</id>
+        <label>Description</label>
+        <type>text</type>
+        <help>Description to identify this rule.</help>
+    </field>  
+    <field>
+        <id>ipRule.shaperDownload</id>
+        <label>Shaper Download</label>
+        <type>dropdown</type>
+        <help>target shaper pipe or queue for download.</help>
+        <advanced>true</advanced>
+    </field>  
+    <field>
+        <id>ipRule.shaperUpload</id>
+        <label>Shaper Upload</label>
+        <type>dropdown</type>
+        <help>target shaper pipe or queue for upload.</help>
+        <advanced>true</advanced>
+    </field>
+</form>

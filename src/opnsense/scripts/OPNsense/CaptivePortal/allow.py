@@ -30,6 +30,7 @@
 """
 import sys
 import ujson
+from lib import Config
 from lib.db import DB
 from lib.arp import ARP
 from lib.ipfw import IPFW
@@ -47,22 +48,27 @@ for param in sys.argv[1:]:
 
 # create new session
 if parameters['ip_address'] is not None and parameters['zoneid'] is not None:
-    cpDB = DB()
-    cpIPFW = IPFW()
+    cpConfig = Config()
+    zone_config = cpConfig.get_zone(parameters['zoneid'])
     arp_entry = ARP().get_by_ipaddress(parameters['ip_address'])
     if arp_entry is not None:
         mac_address = arp_entry['mac']
     else:
         mac_address = None
 
-    response = cpDB.add_client(zoneid=parameters['zoneid'],
-                               authenticated_via=parameters['authenticated_via'],
-                               username=parameters['username'],
-                               ip_address=parameters['ip_address'],
-                               mac_address=mac_address
-                               )
-    cpIPFW.add_to_table(table_number=parameters['zoneid'], address=parameters['ip_address'])
-    response['clientState'] = 'AUTHORIZED'
+    if mac_address is not None and 'blockMacAccess' in zone_config and mac_address in zone_config['blockMacAccess']:
+        response = {'clientState': 'MAC_NOT_AUTHORIZED', 'macAddress': mac_address}
+    else:
+        cpIPFW = IPFW()
+        cpDB = DB()
+        response = cpDB.add_client(zoneid=parameters['zoneid'],
+                                   authenticated_via=parameters['authenticated_via'],
+                                   username=parameters['username'],
+                                   ip_address=parameters['ip_address'],
+                                   mac_address=mac_address
+                                   )
+        cpIPFW.add_to_table(table_number=parameters['zoneid'], address=parameters['ip_address'])
+        response['clientState'] = 'AUTHORIZED'
 else:
     response = {'clientState': 'UNKNOWN'}
 

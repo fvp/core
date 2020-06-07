@@ -79,11 +79,10 @@ class ArrayField extends BaseField
     {
         $new_record = array();
         foreach ($this->internalTemplateNode->iterateItems() as $key => $node) {
-            if ($node->isContainer()) {
-                // validate child nodes, nesting not supported in this version.
-                throw new \Exception("Unsupported copy, Array doesn't support nesting.");
+            // Array doesn't support nesting. Don't include nested childs.
+            if (!$node->isContainer()) {
+                $new_record[$key] = clone $node;
             }
-            $new_record[$key] = clone $node;
         }
 
         $nodeUUID = $this->generateUUID();

@@ -188,23 +188,31 @@ class AccessController extends ApiControllerBase
                                 'json'
                             )
                         );
+                        
                         $CPsession = json_decode($CPsession, true);
-                        // push session restrictions, if they apply
-                        if ($CPsession != null && array_key_exists('sessionId', $CPsession) && $authServer != null) {
-                            $authProps = $authServer->getLastAuthProperties();
-                            // when adding more client/session restrictions, extend next code
-                            // (currently only time is restricted)
-                            if (array_key_exists('session_timeout', $authProps) || $cpZone->alwaysSendAccountingReqs == '1') {
-                                $backend->configdpRun(
-                                    "captiveportal set session_restrictions",
-                                    array((string)$cpZone->zoneid,
-                                        $CPsession['sessionId'],
-                                        $authProps['session_timeout'] ?? null,
-                                        )
-                                );
-                            }
-                        }
                         if ($CPsession != null) {
+                            // check if MAC address is authorized
+                            if (array_key_exists('clientState', $CPsession) && $CPsession['clientState'] == 'MAC_NOT_AUTHORIZED') {
+                                $this->getLogger("captiveportal")->info("BLOCKED MAC " . $CPsession['macAddress'] . " for  " . $userName .  " (" . $clientIp . ") zone " . $zoneid);
+                                return array("clientState" => 'NOT_AUTHORIZED', "ipAddress" => $clientIp);
+                            }
+
+                            // push session restrictions, if they apply
+                            if (array_key_exists('sessionId', $CPsession) && $authServer != null) {
+                                $authProps = $authServer->getLastAuthProperties();
+                                // when adding more client/session restrictions, extend next code
+                                // (currently only time is restricted)
+                                if (array_key_exists('session_timeout', $authProps) || $cpZone->alwaysSendAccountingReqs == '1') {
+                                    $backend->configdpRun(
+                                        "captiveportal set session_restrictions",
+                                        array((string)$cpZone->zoneid,
+                                            $CPsession['sessionId'],
+                                            $authProps['session_timeout'] ?? null,
+                                            )
+                                    );
+                                }
+                            }
+
                             // only return session if configd return a valid json response, otherwise fallback to
                             // returning "UNKNOWN"
                             return $CPsession;

@@ -64,18 +64,10 @@ class CPBackgroundProcess(object):
     def initialize_fixed(self):
         """ initialize fixed ip / hosts per zone
         """
-        cpzones = self._conf_zone_info
-        for zoneid in cpzones:
-            for conf_section in ['allowedaddresses', 'allowedmacaddresses']:
-                for address in cpzones[zoneid][conf_section]:
-                    if conf_section.find('mac') == -1:
-                        sessions = self.db.sessions_per_address(zoneid, ip_address=address)
-                        ip_address = address
-                        mac_address = None
-                    else:
-                        sessions = self.db.sessions_per_address(zoneid, mac_address=address)
-                        ip_address = None
-                        mac_address = address
+        for zoneid, zone in self._conf_zone_info.items():
+            if 'passMacAccess' in zone:
+                for mac in zone['passMacAccess']:    
+                    sessions = self.db.sessions_per_address(zoneid, mac_address=mac)              
                     sessions_deleted = 0
                     for session in sessions:
                         if session['authenticated_via'] not in ('---ip---', '---mac---'):
@@ -84,22 +76,48 @@ class CPBackgroundProcess(object):
                     if sessions_deleted == len(sessions) or len(sessions) == 0:
                         # when there's no session active, add a new one
                         # (only administrative, the sync process will add it if neccesary)
-                        if ip_address is not None:
-                            self.db.add_client(zoneid, "---ip---", "", ip_address, "")
-                        else:
-                            self.db.add_client(zoneid, "---mac---", "", "", mac_address)
+                        self.db.add_client(zoneid, "---mac---", "", "", mac)
+                            
+            if 'ipAccess' in zone:
+                for ip in zone['ipAccess']:    
+                    sessions = self.db.sessions_per_address(zoneid, ip_address=ip)              
+                    sessions_deleted = 0
+                    for session in sessions:
+                        if session['authenticated_via'] not in ('---ip---', '---mac---'):
+                            sessions_deleted += 1
+                            self.db.del_client(zoneid, session['sessionId'])
+                    if sessions_deleted == len(sessions) or len(sessions) == 0:
+                        # when there's no session active, add a new one
+                        # (only administrative, the sync process will add it if neccesary)
+                        self.db.add_client(zoneid, "---ip---", "", ip, "")
 
             # cleanup removed static sessions
             for dbclient in self.db.list_clients(zoneid):
                 if dbclient['authenticated_via'] == '---ip---' \
-                        and dbclient['ipAddress'] not in cpzones[zoneid]['allowedaddresses']:
+                        and dbclient['ipAddress'] not in zone['ipAccess']:
                         self.ipfw.delete(zoneid, dbclient['ipAddress'])
                         self.db.del_client(zoneid, dbclient['sessionId'])
                 elif dbclient['authenticated_via'] == '---mac---' \
-                        and dbclient['macAddress'] not in cpzones[zoneid]['allowedmacaddresses']:
+                        and dbclient['macAddress'] not in zone['passMacAccess']:
                         if dbclient['ipAddress'] != '':
                             self.ipfw.delete(zoneid, dbclient['ipAddress'])
                         self.db.del_client(zoneid, dbclient['sessionId'])
+
+    def add_traffic_shapper(self, config, ip_address):
+        if 'shaperUpload' in config:
+            self.ipfw.add_traffic_shapper(config['shaperUpload']['type'], config['shaperUpload']['number'], 'out', ip_address)
+        if 'shaperDownload' in config:
+            self.ipfw.add_traffic_shapper(config['shaperDownload']['type'], config['shaperDownload']['number'], 'in', ip_address)
+
+    def add_traffic_shapper_by_ip(self, zoneid, ip_address):
+        if ip_address in self._conf_zone_info[zoneid]['ipAccess']:
+            ip_config = self._conf_zone_info[zoneid]['ipAccess'][ip_address]
+            self.add_traffic_shapper(ip_config, ip_address)
+
+    def add_traffic_shapper_by_mac(self, zoneid, mac_address, ip_address):
+        if mac_address in self._conf_zone_info[zoneid]['passMacAccess']:
+            mac_config = self._conf_zone_info[zoneid]['passMacAccess'][mac_address]
+            self.add_traffic_shapper(mac_config, ip_address)
 
     def sync_zone(self, zoneid):
         """ Synchronize captiveportal zone.
@@ -107,7 +125,6 @@ class CPBackgroundProcess(object):
         """
         if zoneid in self._conf_zone_info:
             # fetch data for this zone
-            cpzone_info = self._conf_zone_info[zoneid]
             registered_addresses = self.ipfw.list_table(zoneid)
             registered_addr_accounting = self.ipfw.list_accounting_info()
             expected_clients = self.db.list_clients(zoneid)
@@ -125,21 +142,21 @@ class CPBackgroundProcess(object):
                 # session cleanups, only for users not for static hosts/ranges.
                 if db_client['authenticated_via'] not in ('---ip---', '---mac---'):
                     # check if hardtimeout is set and overrun for this session
-                    if 'hardtimeout' in cpzone_info and str(cpzone_info['hardtimeout']).isdigit():
+                    if 'hardtimeout' in zone and str(zone['hardtimeout']).isdigit():
                         # hardtimeout should be set and we should have collected some session data from the client
-                        if int(cpzone_info['hardtimeout']) > 0 and float(db_client['startTime']) > 0:
-                            if (time.time() - float(db_client['startTime'])) / 60 > int(cpzone_info['hardtimeout']):
+                        if int(zone['hardtimeout']) > 0 and float(db_client['startTime']) > 0:
+                            if (time.time() - float(db_client['startTime'])) / 60 > int(zone['hardtimeout']):
                                 drop_session_reason = "session %s hit hardtimeout" % db_client['sessionId']
 
                     # check if idletimeout is set and overrun for this session
-                    if 'idletimeout' in cpzone_info and str(cpzone_info['idletimeout']).isdigit():
+                    if 'idletimeout' in zone and str(zone['idletimeout']).isdigit():
                         # idletimeout should be set and we should have collected some session data from the client
-                        if int(cpzone_info['idletimeout']) > 0 and float(db_client['last_accessed']) > 0:
-                            if (time.time() - float(db_client['last_accessed'])) / 60 > int(cpzone_info['idletimeout']):
+                        if int(zone['idletimeout']) > 0 and float(db_client['last_accessed']) > 0:
+                            if (time.time() - float(db_client['last_accessed'])) / 60 > int(zone['idletimeout']):
                                 drop_session_reason = "session %s hit idletimeout" % db_client['sessionId']
 
                     # cleanup concurrent users
-                    if 'concurrentlogins' in cpzone_info and int(cpzone_info['concurrentlogins']) == 0:
+                    if 'concurrentlogins' in zone and int(zone['concurrentlogins']) == 0:
                         if db_client['sessionId'] in concurrent_users:
                             drop_session_reason = "remove concurrent session %s" % db_client['sessionId']
 
@@ -156,18 +173,24 @@ class CPBackgroundProcess(object):
                 elif db_client['authenticated_via'] == '---mac---':
                     # detect mac changes
                     current_ip = self.arp.get_address_by_mac(db_client['macAddress'])
-                    if current_ip is not None:
-                        if db_client['ipAddress'] != '':
+                    if current_ip is not None and current_ip != cpnet:
+                        if cpnet != '':
                             # remove old ip
-                            self.ipfw.delete(zoneid, db_client['ipAddress'])
+                            self.ipfw.delete(zoneid, cpnet)
                         self.db.update_client_ip(zoneid, db_client['sessionId'], current_ip)
                         self.ipfw.add_to_table(zoneid, current_ip)
+                        self.add_traffic_shapper_by_mac(zoneid, db_client['macAddress'], current_ip)
 
                 # check session, if it should be active, validate its properties
                 if drop_session_reason is None:
                     # registered client, but not active or missing accounting according to ipfw (after reboot)
-                    if cpnet not in registered_addresses or cpnet not in registered_addr_accounting:
+                    if cpnet != '' and (cpnet not in registered_addresses or cpnet not in registered_addr_accounting):
                         self.ipfw.add_to_table(zoneid, cpnet)
+                        if db_client['authenticated_via'] == '---mac---':
+                            self.add_traffic_shapper_by_mac(zoneid, db_client['macAddress'], cpnet)
+                        else:
+                            self.add_traffic_shapper_by_ip(zoneid, cpnet)
+
                 else:
                     # remove session
                     syslog.syslog(syslog.LOG_NOTICE, drop_session_reason)

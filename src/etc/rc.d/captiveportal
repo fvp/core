@@ -41,7 +41,7 @@ captiveportal_load_rc_config()
     CPDEFAULTTEMPLATE="/usr/local/opnsense/scripts/OPNsense/CaptivePortal/htdocs_default"
 
     # extract all zones from captive portal configuration
-    CPZONES=`cat /usr/local/etc/captiveportal.conf | grep "\[zone_" | sed 's/\[zone_//' | sed 's/\]//'`
+    CPZONES=`cat /usr/local/etc/captiveportal.yaml | grep "\- id:" | sed 's/  \- id: //'`
 }
 
 captiveportal_cleanup_zones()

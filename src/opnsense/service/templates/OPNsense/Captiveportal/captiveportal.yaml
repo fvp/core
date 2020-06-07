@@ -1,0 +1,55 @@
+{% if helpers.exists('OPNsense.captiveportal.zones.zone') %}
+zones:
+{%   for cpZone in helpers.toList('OPNsense.captiveportal.zones.zone', listNodes=['macRule', 'ipRule']) %}
+{%     if cpZone.enabled|default('0') == '1' %}
+  - id: {{cpZone.zoneid}}
+    authservers: {{ cpZone.authservers }}
+    idletimeout: {{ cpZone.idletimeout|default("0") }}
+    hardtimeout: {{ cpZone.hardtimeout|default("0") }}
+    concurrentlogins: {{ cpZone.concurrentlogins|default("0") }}
+{%       if cpZone.macAccess and cpZone.macAccess.macRule %}
+    macAccess:
+{%         for item in cpZone.macAccess.macRule %} 
+{%           if item.enabled|default('0') == '1' %}
+      - mac: {{ item.mac }}
+        action: {{ item.action }}
+{%             set shaperUpload = helpers.getUUID(item.shaperUpload) %}
+{%             if shaperUpload.enabled|default('0') == '1' %}        
+        shaperUpload: 
+          type: {{ helpers.getUUIDtag(item.shaperUpload) }}
+          number: {{ shaperUpload.number }}
+{%             endif %}
+{%             set shaperDownload = helpers.getUUID(item.shaperDownload) %}
+{%             if shaperDownload.enabled|default('0') == '1' %}        
+        shaperDownload: 
+          type: {{ helpers.getUUIDtag(item.shaperDownload) }}
+          number: {{ shaperDownload.number }}
+{%             endif %}
+{%           endif %}
+{%         endfor %}
+{%       endif %}
+{%       if cpZone.ipAccess and cpZone.ipAccess.ipRule %}
+    ipAccess:
+{%         for item in cpZone.ipAccess.ipRule %}
+{%           if item.enabled|default('0') == '1' %}
+      - ip: {{ item.ip }}
+{%             set shaperUpload = helpers.getUUID(item.shaperUpload) %}
+{%             if shaperUpload.enabled|default('0') == '1' %}        
+        shaperUpload: 
+          type: {{ helpers.getUUIDtag(item.shaperUpload) }}
+          number: {{ shaperUpload.number }}
+{%             endif %}
+{%             set shaperDownload = helpers.getUUID(item.shaperDownload) %}
+{%             if shaperDownload.enabled|default('0') == '1' %}        
+        shaperDownload: 
+          type: {{ helpers.getUUIDtag(item.shaperDownload) }}
+          number: {{ shaperDownload.number }}
+{%             endif %}
+{%           endif %}
+{%         endfor %}
+{%       endif %}
+    template: {{ helpers.getUUID(cpZone.template).content }}
+
+{%     endif %}
+{%   endfor %}
+{% endif %}

@@ -100,6 +100,151 @@
                     <mask>/^([\t\n\v\f\r 0-9a-zA-Z.,_\x{00A0}-\x{FFFF}]){1,255}$/u</mask>
                     <ValidationMessage>Description should be a string between 1 and 255 characters</ValidationMessage>
                 </description>
+                <macAccess>
+                    <macRule type="ArrayField">
+                        <enabled type="BooleanField">
+                            <default>1</default>
+                            <Required>Y</Required>
+                        </enabled>
+                        <action type="OptionField">
+                            <Required>Y</Required>
+                            <default>pass</default>
+                            <OptionValues>
+                                <pass>Pass</pass>
+                                <block>Block</block>
+                            </OptionValues>
+                        </action>                 
+                        <mac type="TextField">
+                            <Required>Y</Required>
+                            <ChangeCase>lower</ChangeCase>
+                            <mask>/^((([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})([,]){0,1}))*/u</mask>
+                            <ValidationMessage>Please enter valid mac address</ValidationMessage>
+                            <Constraints>
+                               <check001>
+                                  <ValidationMessage>A mac address with this value already exists.</ValidationMessage>
+                                  <type>UniqueConstraint</type>
+                               </check001>
+                            </Constraints>
+                        </mac>
+                        <description type="TextField">
+                            <Required>N</Required>
+                            <mask>/^([\t\n\v\f\r 0-9a-zA-Z.,_\x{00A0}-\x{FFFF}]){1,255}$/u</mask>
+                            <ValidationMessage>Description should be a string between 1 and 255 characters</ValidationMessage>
+                        </description>                
+                        <shaperUpload type="ModelRelationField">
+                            <Model>
+                                <pipes>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>pipes.pipe</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </pipes>
+                                <queues>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>queues.queue</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </queues>
+                            </Model>
+                            <ValidationMessage>Related shaper pipe or queue not found</ValidationMessage>
+                            <Required>N</Required>
+                        </shaperUpload>
+                        <shaperDownload type="ModelRelationField">
+                            <Model>
+                                <pipes>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>pipes.pipe</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </pipes>
+                                <queues>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>queues.queue</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </queues>
+                            </Model>
+                            <ValidationMessage>Related shaper pipe or queue not found</ValidationMessage>
+                            <Required>N</Required>
+                        </shaperDownload>             
+                    </macRule>
+                </macAccess>
+                <ipAccess>
+                    <ipRule type="ArrayField">
+                        <enabled type="BooleanField">
+                            <default>1</default>
+                            <Required>Y</Required>
+                        </enabled>                 
+                        <ip type="TextField">
+                            <Required>Y</Required>
+                            <mask>/^(([0-9]){1,3}.([0-9]){1,3}.([0-9]){1,3}.([0-9]){1,3})$/u</mask>
+                            <ValidationMessage>Please enter valid ip address</ValidationMessage>
+                            <Constraints>
+                               <check001>
+                                  <ValidationMessage>An ip address with this value already exists.</ValidationMessage>
+                                  <type>UniqueConstraint</type>
+                               </check001>
+                            </Constraints>
+                        </ip>
+                        <description type="TextField">
+                            <Required>N</Required>
+                            <mask>/^([\t\n\v\f\r 0-9a-zA-Z.,_\x{00A0}-\x{FFFF}]){1,255}$/u</mask>
+                            <ValidationMessage>Description should be a string between 1 and 255 characters</ValidationMessage>
+                        </description>                
+                        <shaperUpload type="ModelRelationField">
+                            <Model>
+                                <pipes>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>pipes.pipe</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </pipes>
+                                <queues>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>queues.queue</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </queues>
+                            </Model>
+                            <ValidationMessage>Related shaper pipe or queue not found</ValidationMessage>
+                            <Required>N</Required>
+                        </shaperUpload>
+                        <shaperDownload type="ModelRelationField">
+                            <Model>
+                                <pipes>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>pipes.pipe</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </pipes>
+                                <queues>
+                                    <source>OPNsense.TrafficShaper.TrafficShaper</source>
+                                    <items>queues.queue</items>
+                                    <display>description</display>
+                                    <filters>
+                                        <description>/(.){1,255}/</description>
+                                    </filters>
+                                </queues>
+                            </Model>
+                            <ValidationMessage>Related shaper pipe or queue not found</ValidationMessage>
+                            <Required>N</Required>
+                        </shaperDownload>             
+                    </ipRule>
+                </ipAccess>
             </zone>
         </zones>
         <templates>
@@ -120,6 +265,6 @@
                     <ValidationMessage>File content should be in (base64 encoded) zip format</ValidationMessage>
                 </content>
             </template>
-        </templates>
+        </templates>                 
     </items>
 </model>

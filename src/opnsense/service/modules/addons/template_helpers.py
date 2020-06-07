@@ -110,12 +110,13 @@ class Helpers(object):
         else:
             return False
 
-    def toList(self, tag, sortBy=None, sortAs=None):
+    def toList(self, tag, sortBy=None, sortAs=None, listNodes=None):
         """ if an item should be a list of items (repeating tag), use this method to make sure that we always return
             a list. The configuration doesn't know if a non repeating item is supposed to be a list of items, this makes
             it explicit.
         :param tag: tag in dot notation (section.item)
         :param sortBy: resort result by specfied key
+        :param listNodes: list of nodes to convert to list if not already so
         :return: []
         """
         result = self.getNodeByTag(tag)
@@ -125,6 +126,9 @@ class Helpers(object):
             # wrap result
             result = [result]
 
+        if listNodes is not None and type(listNodes) == list:
+            Helpers.dictValueToList(result, *listNodes)
+
         if sortBy is None:
             return result
         else:
@@ -132,7 +136,7 @@ class Helpers(object):
             if sortAs is 'int':
                 return sorted(result, key=lambda d: int(d[sortBy]))
             else:
-                return sorted(result, key=lambda d: d[sortBy])
+                return sorted(result, key=lambda d: d[sortBy])                                        
 
     def getUUIDtag(self, uuid):
         """ retrieve tag name of registered uuid, returns __not_found__ if none available
@@ -184,3 +188,19 @@ class Helpers(object):
                 result.append(sfilename[len(template_path):].lstrip('/'))
 
         return result
+
+    @staticmethod
+    def dictValueToList(node, *listKeys):
+        """ Recursively search for dict keys in listKeys and if the value is not an list, it encapsulate the value in a list 
+            :param node: the root node to start searching for listKeys
+            :return: the tranformed node
+        """        
+        if isinstance(node, list):
+            for v in node:
+                Helpers.dictValueToList(v, *listKeys)
+        elif isinstance(node, dict):    
+            for k, v in node.items():
+                if k in listKeys and not isinstance(v, list):
+                    node[k] = [v]
+
+                Helpers.dictValueToList(v, *listKeys)              

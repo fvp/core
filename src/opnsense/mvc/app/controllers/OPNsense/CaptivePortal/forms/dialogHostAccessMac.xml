@@ -1,0 +1,40 @@
+<form>
+    <field>
+        <id>macRule.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Enable this rule.</help>
+    </field>
+    <field>
+        <id>macRule.action</id>
+        <label>Action</label>
+        <type>dropdown</type>
+        <help>Choose what to do with packets coming from this MAC address.</help>
+    </field>    
+    <field>
+        <id>macRule.mac</id>
+        <label>Mac</label>
+        <type>text</type>
+        <help>6 hex octets separated by colons.</help>
+    </field>
+    <field>
+        <id>macRule.description</id>
+        <label>Description</label>
+        <type>text</type>
+        <help>Description to identify this rule.</help>
+    </field>    
+    <field>
+        <id>macRule.shaperDownload</id>
+        <label>Shaper Download</label>
+        <type>dropdown</type>
+        <help>target shaper pipe or queue for download.</help>
+        <advanced>true</advanced>
+    </field>
+    <field>
+        <id>macRule.shaperUpload</id>
+        <label>Shaper Upload</label>
+        <type>dropdown</type>
+        <help>target shaper pipe or queue for upload.</help>
+        <advanced>true</advanced>
+    </field>
+</form>

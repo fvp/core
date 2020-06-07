@@ -1,4 +1,5 @@
 rc.conf.d:/etc/rc.conf.d/captiveportal
 captiveportal.conf:/usr/local/etc/captiveportal.conf
+captiveportal.yaml:/usr/local/etc/captiveportal.yaml
 lighttpd-api-dispatcher.conf:/var/etc/lighttpd-api-dispatcher.conf
 lighttpd-zone.conf:/var/etc/lighttpd-cp-zone-[OPNsense.captiveportal.zones.zone.%.zoneid].conf

@@ -131,7 +131,7 @@ class IPFW(object):
                     result[ip_address]['out_pkts'] = line_pkts
                     result[ip_address]['out_bytes'] = line_bytes
 
-        return result
+        return result        
 
     def _add_accounting(self, address):
         """ add ip address for accounting
@@ -141,10 +141,10 @@ class IPFW(object):
         # search for unused rule number
         acc_info = self.list_accounting_info()
         if address not in acc_info:
-            rule_ids = list()
+
+            rule_ids = set()
             for ip_address in acc_info:
-                if acc_info[ip_address]['rule'] not in rule_ids:
-                    rule_ids.append(acc_info[ip_address]['rule'])
+                rule_ids.add(acc_info[ip_address]['rule'])
 
             new_rule_id = -1
             for ruleId in range(30000, 50000):
@@ -154,6 +154,7 @@ class IPFW(object):
 
             # add accounting rule
             if new_rule_id != -1:
+
                 subprocess.run(['/sbin/ipfw', 'add', str(new_rule_id), 'count', 'ip', 'from', address, 'to', 'any'],
                                capture_output=True)
                 subprocess.run(['/sbin/ipfw', 'add', str(new_rule_id), 'count', 'ip', 'from', 'any', 'to', address],
@@ -161,9 +162,10 @@ class IPFW(object):
 
                 # end of accounting block lives at rule number 50000
                 subprocess.run(
-                    ['/sbin/ipfw', 'add', str(new_rule_id), 'skipto', '60000', 'ip', 'from', 'any', 'to', 'any'],
+                    ['/sbin/ipfw', 'add', str(new_rule_id), 'skipto', '55000', 'ip', 'from', 'any', 'to', 'any'],
                     capture_output=True
                 )
+
 
                 return new_rule_id
         else:
@@ -186,3 +188,91 @@ class IPFW(object):
         """
         self.delete_from_table(table_number, address)
         self._del_accounting(address)
+        self._del_traffic_shapper(address)
+
+    @staticmethod
+    def list_traffic_shapper_info():
+        """ list traffic shapper info per ip addres, addresses can't overlap in zone's so we just output all we know here
+        instead of trying to map addresses back to zones.
+        :return: list traffic shapper info per ip address
+        """
+        result = dict()
+        sp = subprocess.run(['/sbin/ipfw', 'list'], capture_output=True, text=True)
+        for line in sp.stdout.split('\n'):
+            parts = line.split()
+            if len(parts) > 2 and 55000 <= int(parts[0]) < 60000 and parts[1] in ('pipe', 'queue'):
+                if parts[5] != 'any':
+                    ip_address = parts[5]
+                else:
+                    ip_address = parts[7]
+
+                if ip_address not in result:
+                    result[ip_address] = list()
+
+                result[ip_address].append({
+                    'rule': int(parts[0]),
+                    'type': parts[1],
+                    'type_number': int(parts[2]),
+                    'direction': parts[8]
+                })
+
+        return result    
+
+    def add_traffic_shapper(self, ts_type, ts_type_number, direction, address):
+        """ add traffic shapper pipe or queue to ipfw
+        :param ts_type: pipe or queue
+        :param ts_type_number: pipe or queue number
+        :param direction: in or out
+        :param address: ip address or net to add to table
+        :return:
+        """ 
+        # validate params
+        if ts_type not in ('pipe', 'queue') or direction not in ('in', 'out'):
+            return None
+
+        ts_info = self.list_traffic_shapper_info()
+        # check if rule already exist
+        if address in ts_info:
+            for ts_rule in ts_info[address]:
+                if ts_rule['type'] == ts_type and ts_rule['direction'] == direction:
+                    return ts_rule['rule']
+
+
+        rule_ids = set()
+        for ip_address in ts_info:
+            for ts_rule in ts_info[ip_address]:
+                rule_ids.add(ts_rule['rule'])
+
+        new_rule_id = -1
+        for ruleId in range(55000, 59999):
+            if ruleId not in rule_ids:
+                new_rule_id = ruleId
+                break
+
+        # add traffic shapper rule
+        if new_rule_id != -1:
+            if direction == 'out':
+                subprocess.run(
+                            ['/sbin/ipfw', 'add', str(new_rule_id), ts_type, str(ts_type_number), 'ip', 'from', address, 'to', 'any', 'out'],
+                            capture_output=True
+                        )
+            elif direction == 'in':
+                subprocess.run(
+                            ['/sbin/ipfw', 'add', str(new_rule_id), ts_type, str(ts_type_number), 'ip', 'from', 'any', 'to', address, 'in'],
+                            capture_output=True
+                        )
+
+            return new_rule_id
+
+    def _del_traffic_shapper(self, address):
+        """ remove ip address from traffic shapper rules
+        :param address: ip address
+        :return: None
+        """
+        ts_info = self.list_traffic_shapper_info()
+        if address in ts_info:
+            for ts_rule in ts_info[address]:
+                subprocess.run(['/sbin/ipfw', 'delete', str(ts_rule['rule'])], capture_output=True)        
+
+
+
