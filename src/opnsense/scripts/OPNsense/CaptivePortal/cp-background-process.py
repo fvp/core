@@ -61,15 +61,38 @@ class CPBackgroundProcess(object):
         """
         return self._conf_zone_info.keys()
 
+# [{'rule': 55000, 'type': 'pipe', 'type_number': 10000, 'direction': 'out'}, {'rule': 55001, 'type': 'pipe', 'type_number': 10001, 'direction': 'in'}]
+    def has_traffic_shapper_changed(self, traffic_shapper_info, host_shapper_rule, ip_address):
+        if ip_address != '' and ip_address in traffic_shapper_info:
+            for ts_rule in traffic_shapper_info[ip_address]:
+                if ts_rule['direction'] == 'in' and 'shaperDownload' in host_shapper_rule:
+                    return self.has_traffic_shapper_changed_check(ts_rule, host_shapper_rule['shaperDownload'])
+                elif ts_rule['direction'] == 'out' and 'shaperUpload' in host_shapper_rule:
+                    return self.has_traffic_shapper_changed_check(ts_rule, host_shapper_rule['shaperUpload'])     
+                    
+            #print(ts_info)
+        return False
+
+    def has_traffic_shapper_changed_check(self, ts_rule, host_shapper_rule_info):
+        if ts_rule['type'] != host_shapper_rule_info['type'] or ts_rule['type_number'] != host_shapper_rule_info['number']:
+            return True
+        else:
+            return False
+
+
     def initialize_fixed(self):
         """ initialize fixed ip / hosts per zone
         """
+        traffic_shapper_info = self.ipfw.list_traffic_shapper_info()
+
         for zoneid, zone in self._conf_zone_info.items():
             if 'passMacAccess' in zone:
                 for mac in zone['passMacAccess']:    
                     sessions = self.db.sessions_per_address(zoneid, mac_address=mac)              
                     sessions_deleted = 0
                     for session in sessions:
+                        ##print(session)
+                        self.has_traffic_shapper_changed(traffic_shapper_info, zone['passMacAccess'][mac], session['ipAddress'])
                         if session['authenticated_via'] not in ('---ip---', '---mac---'):
                             sessions_deleted += 1
                             self.db.del_client(zoneid, session['sessionId'])
@@ -91,17 +114,21 @@ class CPBackgroundProcess(object):
                         # (only administrative, the sync process will add it if neccesary)
                         self.db.add_client(zoneid, "---ip---", "", ip, "")
 
-            # cleanup removed static sessions
+            # cleanup removed static sessions and blocked mac
             for dbclient in self.db.list_clients(zoneid):
-                if dbclient['authenticated_via'] == '---ip---' \
-                        and dbclient['ipAddress'] not in zone['ipAccess']:
+                if dbclient['authenticated_via'] == '---ip---':
+                    if dbclient['ipAddress'] not in zone['ipAccess']:
                         self.ipfw.delete(zoneid, dbclient['ipAddress'])
                         self.db.del_client(zoneid, dbclient['sessionId'])
-                elif dbclient['authenticated_via'] == '---mac---' \
-                        and dbclient['macAddress'] not in zone['passMacAccess']:
+                elif dbclient['authenticated_via'] == '---mac---':
+                    if dbclient['macAddress'] not in zone['passMacAccess']:
                         if dbclient['ipAddress'] != '':
                             self.ipfw.delete(zoneid, dbclient['ipAddress'])
                         self.db.del_client(zoneid, dbclient['sessionId'])
+                elif dbclient['macAddress'] != '' and dbclient['macAddress'] in zone['blockMacAccess']:
+                    if dbclient['ipAddress'] != '':
+                        self.ipfw.delete(zoneid, dbclient['ipAddress'])
+                    self.db.del_client(zoneid, dbclient['sessionId'])                                     
 
     def add_traffic_shapper(self, config, ip_address):
         if 'shaperUpload' in config:

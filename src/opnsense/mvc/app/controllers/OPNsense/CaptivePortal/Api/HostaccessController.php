@@ -141,7 +141,13 @@ class HostaccessController extends ApiControllerBase
             if ($cpZone != null) {
                 $node = $cpZone->macAccess->macRule->{$uuid};
                 if ($node != null) {
-                    $node->setNodes($this->request->getPost("macRule"));
+                    $macRule = $this->request->getPost("macRule");
+                    // If rule is to block mac access there is no need for traffic shapping
+                    if (array_key_exists('action', $macRule) && $macRule['action'] == "block") {
+                        $macRule['shaperDownload'] = '';
+                        $macRule['shaperUpload'] = '';
+                    }    
+                    $node->setNodes($macRule);
                     return $this->save($mdlCP, $node, "macRule");
                 }
             }
@@ -160,9 +166,15 @@ class HostaccessController extends ApiControllerBase
         if ($this->request->isPost() && $this->request->hasPost("macRule")) {
             $mdlCP = new CaptivePortal();
             $cpZone = $mdlCP->getByZoneID($zoneid);
-            if ($cpZone != null) {
+            if ($cpZone != null) {     
+                $macRule = $this->request->getPost("macRule");
+                // If rule is to block mac access there is no need for traffic shapping
+                if (array_key_exists('action', $macRule) && $macRule['action'] == "block") {
+                    $macRule['shaperDownload'] = '';
+                    $macRule['shaperUpload'] = '';
+                }
                 $node = $cpZone->macAccess->macRule->Add();
-                $node->setNodes($this->request->getPost("macRule"));
+                $node->setNodes($macRule);
                 return $this->save($mdlCP, $node, "macRule");
             }
         }

@@ -91,7 +91,7 @@ class DB(object):
         }
         cur.execute("""select   cc.sessionid         sessionId
                         ,       cc.authenticated_via authenticated_via
-                        , cc.ip_address
+                        ,       cc.ip_address        ip_address
                        from     cp_clients cc
                        where    cc.deleted = 0
                        and      cc.zoneid = :zoneid
@@ -103,7 +103,7 @@ class DB(object):
 
         result = []
         for row in cur.fetchall():
-            result.append({'sessionId': row[0], 'authenticated_via': row[1]})
+            result.append({'sessionId': row[0], 'authenticated_via': row[1], 'ipAddress': row[2]})
         return result
 
     def add_client(self, zoneid, authenticated_via, username, ip_address, mac_address):
